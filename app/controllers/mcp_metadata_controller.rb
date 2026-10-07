@@ -47,13 +47,11 @@ class McpMetadataController < ApplicationController
       response_types_supported: %w[code],
       grant_types_supported: %w[authorization_code refresh_token],
       token_endpoint_auth_methods_supported: %w[client_secret_basic client_secret_post],
-      # Deliberately no registration_endpoint. Redmine has no RFC 7591 dynamic
-      # client registration -- an administrator creates the application by hand
-      # under Administration > Applications. Advertising an endpoint that
-      # answers 404 is worse than omitting it: a client that requires
-      # registration can then fail for the right reason.
       service_documentation: 'https://www.redmine.org/projects/redmine/wiki/Rest_api#OAuth2'
     }
+    if RedmineMcpPlugin::Settings.dcr_enabled?
+      payload[:registration_endpoint] = "#{root_url_without_trailing_slash}/oauth/registration"
+    end
     methods = code_challenge_methods
     payload[:code_challenge_methods_supported] = methods if methods.any?
     render json: payload

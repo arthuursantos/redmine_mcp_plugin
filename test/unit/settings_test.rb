@@ -42,6 +42,17 @@ class RedmineMcpPluginSettingsTest < ActiveSupport::TestCase
     with_settings_hash({})                   { assert_not S.enabled? }
   end
 
+  # dcr_enabled gates dynamic client registration. Off by default, and like
+  # every other flag it must read correctly whether the hash is keyed by symbols
+  # (fresh from DEFAULTS) or strings (after an admin saves).
+  def test_dcr_enabled_defaults_off_and_reads_both_key_styles
+    with_settings_hash({})                      { assert_not S.dcr_enabled? }
+    with_settings_hash(S::DEFAULTS)             { assert_not S.dcr_enabled? }
+    with_settings_hash(dcr_enabled: 'true')     { assert S.dcr_enabled? }
+    with_settings_hash('dcr_enabled' => '1')    { assert S.dcr_enabled? }
+    with_settings_hash('dcr_enabled' => '0')    { assert_not S.dcr_enabled? }
+  end
+
   def test_max_results_is_capped_and_defaulted
     with_settings_hash('max_results' => '5')     { assert_equal 5, S.max_results }
     with_settings_hash('max_results' => '99999') { assert_equal S::ABSOLUTE_MAX_RESULTS, S.max_results }

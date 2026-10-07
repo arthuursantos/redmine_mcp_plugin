@@ -39,7 +39,11 @@ module RedmineMcpPlugin
       # header at all (i.e. every non-browser MCP client) are unaffected.
       'allowed_origins' => '',
       # Cap on rows any single tool call may return.
-      'max_results' => '100'
+      'max_results' => '100',
+      # Dynamic client registration (RFC 7591). Off by default: when on it opens
+      # an unauthenticated endpoint where any caller can register an OAuth2
+      # client, so turning it on must be an explicit decision.
+      'dcr_enabled' => 'false'
     }.freeze
 
     ABSOLUTE_MAX_RESULTS = 1000
@@ -73,6 +77,7 @@ module RedmineMcpPlugin
       def api_key_auth? = bool('auth_api_key')
       def basic_auth?   = bool('auth_basic')
       def session_auth? = bool('auth_session')
+      def dcr_enabled?  = bool('dcr_enabled')
 
       def max_results
         n = all['max_results'].to_i

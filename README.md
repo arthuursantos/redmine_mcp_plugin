@@ -20,11 +20,12 @@ was done with `curl` and scripts. Run the suite before relying on it.
 ```bash
 cd /path/to/redmine
 git clone https://github.com/joaoperfig/redmine_mcp_plugin.git plugins/redmine_mcp_plugin
+bundle install
 sudo systemctl restart redmine    # or however you restart your app server
 ```
 
-No `bundle install`, no migrations. Then go to Administration, Plugins, Redmine MCP Server, Configure
-and switch the endpoint on. It is off until you do.
+No migrations are required. Then go to Administration, Plugins, Redmine MCP Server, Configure and
+switch the endpoint on. It is off until you do.
 
 ## Authentication
 
@@ -40,8 +41,8 @@ Redmine core already implements.
 
 Every token mode also requires the REST API to be enabled in Administration, Settings, API.
 
-For OAuth2, register an application under Administration, Applications, then send
-`Authorization: Bearer <token>`.
+For OAuth2, register an application under Administration, Applications or enable dynamic client
+registration as described below, then send `Authorization: Bearer <token>`.
 
 ### Discovery
 
@@ -56,8 +57,10 @@ Two documents let a client find the authorization server without being told wher
 A 401 from `/mcp` carries `WWW-Authenticate: Bearer realm="Redmine", resource_metadata="..."` pointing
 at the first of those. Both are served only while the endpoint and OAuth2 mode are enabled.
 
-Redmine has no dynamic client registration (RFC 7591), so no `registration_endpoint` is advertised.
-Create the application by hand and give the client its id and secret.
+Dynamic client registration (RFC 7591) is provided by `doorkeeper-openid_connect` and is off by
+default. Enabling it in the plugin settings opens an unauthenticated `POST /oauth/registration`
+endpoint and adds its URL to the authorization-server document. This lets an MCP client register
+itself as a public client; the user still completes Authorization Code with PKCE and grants access.
 
 ## Permission model
 
