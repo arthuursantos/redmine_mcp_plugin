@@ -17,4 +17,15 @@ RedmineApp::Application.routes.draw do
   get '.well-known/oauth-protected-resource'     => 'mcp_metadata#protected_resource'
   get '.well-known/oauth-protected-resource/mcp' => 'mcp_metadata#protected_resource'
   get '.well-known/oauth-authorization-server'   => 'mcp_metadata#authorization_server'
+
+  # RFC 7591 Dynamic Client Registration (doorkeeper-openid_connect), loaded
+  # lazily rather than at boot (see DynamicClientRegistration). Per-request
+  # gating lives in that module. skip_controllers leaves only POST
+  # /oauth/registration -- no userinfo, JWKS or gem .well-known documents.
+  if RedmineMcpPlugin::DynamicClientRegistration.available?
+    RedmineMcpPlugin::DynamicClientRegistration.configure!
+    use_doorkeeper_openid_connect do
+      skip_controllers :userinfo, :discovery
+    end
+  end
 end
