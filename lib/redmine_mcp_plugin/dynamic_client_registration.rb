@@ -14,9 +14,8 @@ module RedmineMcpPlugin
         @available = load!
       end
 
-      # Loaded lazily (PluginGemfile marks it require:false): auto-required at
-      # boot, the gem's engine binds Doorkeeper's controllers before Redmine sets
-      # base_controller, which crashes the app. Route drawing runs late enough.
+      # Load during route drawing because the gem binds controllers before
+      # Redmine sets base_controller when it is required at boot.
       def load!
         require 'doorkeeper/openid_connect'
         Doorkeeper::OpenidConnect::Rails::Routes.install!

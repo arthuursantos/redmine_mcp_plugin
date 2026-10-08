@@ -2,7 +2,6 @@
 
 require File.expand_path('../test_helper', __dir__)
 
-# The registration policy; end-to-end behaviour is in oauth_registration_test.rb.
 class RedmineMcpPluginDcrPolicyTest < ActiveSupport::TestCase
   DCR = RedmineMcpPlugin::DynamicClientRegistration
 

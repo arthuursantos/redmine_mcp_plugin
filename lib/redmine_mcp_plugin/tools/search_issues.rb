@@ -34,8 +34,7 @@ module RedmineMcpPlugin
 
         if (identifier = arguments['project'].presence)
           project = fetch_project(identifier)
-          # .visible already filters by role, but not by OAuth scope -- see the
-          # note on Tool. This is the check that honours a narrowed token.
+          # .visible filters by role but not by a narrowed OAuth scope.
           authorize!(:view_issues, project)
           scope = scope.where(project_id: project.id)
         end
@@ -44,8 +43,6 @@ module RedmineMcpPlugin
           case arguments['status'].presence&.to_s
           when 'closed' then scope.joins(:status).where(issue_statuses: { is_closed: true })
           when 'all'    then scope
-          # 'open', or absent. SchemaValidator has already refused anything
-          # outside the declared enum, so this no longer swallows a typo.
           else scope.open
           end
 

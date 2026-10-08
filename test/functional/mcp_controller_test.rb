@@ -42,8 +42,6 @@ class McpControllerTest < Redmine::ControllerTest
     { 'X-Redmine-API-Key' => user.api_key }
   end
 
-  # --- endpoint gating ---------------------------------------------------
-
   def test_endpoint_is_off_until_enabled
     enable_mcp('enabled' => '0')
     post_mcp rpc('tools/list'), api_key_headers(User.find(2))
@@ -60,8 +58,6 @@ class McpControllerTest < Redmine::ControllerTest
     assert_response :unauthorized
   end
 
-  # A mode that is switched off must not authenticate, even with a valid
-  # credential for that mode.
   def test_disabled_api_key_mode_rejects_a_valid_key
     enable_mcp('auth_api_key' => '0', 'auth_oauth2' => '0', 'auth_basic' => '0', 'auth_session' => '0')
     post_mcp rpc('tools/list'), api_key_headers(User.find(2))
@@ -74,16 +70,12 @@ class McpControllerTest < Redmine::ControllerTest
     assert_response :unauthorized
   end
 
-  # --- transport ----------------------------------------------------------
-
   def test_malformed_json_is_a_parse_error
     post_mcp '{not json', api_key_headers(User.find(2))
     assert_response :bad_request
     assert_equal RedmineMcpPlugin::JsonRpc::PARSE_ERROR, json_body['error']['code']
   end
 
-  # Batching was removed from the protocol in 2025-06-18. Refusing it beats
-  # processing element zero and silently dropping the rest.
   def test_batches_are_refused
     post_mcp [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }].to_json, api_key_headers(User.find(2))
     assert_response :bad_request
@@ -112,8 +104,6 @@ class McpControllerTest < Redmine::ControllerTest
     assert_equal RedmineMcpPlugin::JsonRpc::METHOD_NOT_FOUND, json_body['error']['code']
   end
 
-  # --- Origin / DNS rebinding --------------------------------------------
-
   def test_foreign_origin_is_rejected
     post_mcp rpc('tools/list'), api_key_headers(User.find(2)).merge('Origin' => 'https://evil.example')
     assert_response :forbidden
@@ -125,14 +115,10 @@ class McpControllerTest < Redmine::ControllerTest
     assert_response :success
   end
 
-  # Every non-browser MCP client sends no Origin at all; they must not be
-  # caught by the rebinding guard.
   def test_absent_origin_is_allowed
     post_mcp rpc('tools/list'), api_key_headers(User.find(2))
     assert_response :success
   end
-
-  # --- protocol methods ---------------------------------------------------
 
   def test_server_discover_advertises_versions
     post_mcp rpc('server/discover'), api_key_headers(User.find(2))
@@ -150,8 +136,6 @@ class McpControllerTest < Redmine::ControllerTest
     assert_equal 'private', json_body['result']['cacheScope']
     assert json_body['result']['ttlMs'].to_i.positive?
   end
-
-  # --- read-only mode -----------------------------------------------------
 
   def test_write_tools_are_hidden_in_read_only_mode
     post_mcp rpc('tools/list'), api_key_headers(User.find(1))
@@ -173,8 +157,6 @@ class McpControllerTest < Redmine::ControllerTest
     assert_includes json_body['result']['tools'].map { |t| t['name'] }, 'create_issue'
   end
 
-  # --- visibility ---------------------------------------------------------
-
   def test_whoami_reports_the_authenticated_user
     post_mcp rpc('tools/call', { 'name' => 'whoami' }), api_key_headers(User.find(2))
     payload = json_body['result']['structuredContent']
@@ -183,8 +165,8 @@ class McpControllerTest < Redmine::ControllerTest
     assert_nil payload['oauth_scopes']
   end
 
-  # An invisible issue and a nonexistent one must be indistinguishable, or the
-  # error message confirms the existence of records the caller cannot see.
+  # Keep invisible and nonexistent issues indistinguishable to prevent record
+  # existence from leaking through error text.
   def test_invisible_issue_is_reported_as_not_found
     issue = Issue.find(4)
     issue.update_columns(is_private: true)
@@ -203,8 +185,6 @@ class McpControllerTest < Redmine::ControllerTest
     assert Issue.count > returned.size, 'fixture set should be larger than what one user can see'
   end
 
-  # list_users must not enumerate the directory: core's own users list is
-  # admin-only and each role carries a users_visibility setting.
   def test_list_users_respects_users_visibility
     user = User.find(7)
     post_mcp rpc('tools/call', { 'name' => 'list_users' }), api_key_headers(user)

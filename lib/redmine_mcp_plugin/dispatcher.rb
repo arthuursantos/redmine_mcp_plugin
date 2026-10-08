@@ -6,10 +6,6 @@ module RedmineMcpPlugin
   # Knows nothing about HTTP. The controller owns authentication, the Origin
   # check and status codes; this owns the protocol methods.
   class Dispatcher
-    # 2026-07-28 dropped initialize/notifications/initialized and added
-    # server/discover. The older revisions are still what shipped clients speak,
-    # so both sets are answered and the negotiated version decides which shape
-    # the client gets back.
     def initialize(user:, auth:, protocol_version:)
       @user = user
       @auth = auth
@@ -33,18 +29,11 @@ module RedmineMcpPlugin
         JsonRpc.error(id, JsonRpc::METHOD_NOT_FOUND, "Method not found: #{method}")
       end
     rescue PermissionError => e
-      # A permission failure is a protocol-level refusal, not something the
-      # model can fix by retrying with different arguments.
-      #
-      # INVALID_PARAMS, not INVALID_REQUEST: -32600 means the JSON is not a
-      # valid Request object, which is untrue here and misleads a client into
-      # thinking it framed the call wrongly. -32602 is also what the spec
-      # mandates for the neighbouring case, an unknown tool name in tools/call,
-      # and that case reaches this branch too -- see #tools_call.
+      # Permission failures are protocol-level refusals. INVALID_PARAMS also
+      # covers unknown tool names without misreporting a malformed request.
       JsonRpc.error(message['id'], JsonRpc::INVALID_PARAMS, e.message)
     rescue ToolError => e
-      # Actionable: surfaced as a tool execution error so the model can correct
-      # itself, per the specification's two-tier error model.
+      # Tool errors are actionable and stay inside successful JSON-RPC results.
       JsonRpc.result(message['id'], Protocol.decorate(tool_error(e.message)))
     rescue StandardError => e
       Rails.logger.error("[redmine_mcp_plugin] #{e.class}: #{e.message}\n#{e.backtrace&.first(15)&.join("\n")}")
@@ -55,8 +44,6 @@ module RedmineMcpPlugin
 
     private
 
-    # 2026-07-28: servers MUST implement server/discover, advertising supported
-    # protocol versions, capabilities and identity.
     def discover
       Protocol.decorate(
         protocolVersions: RedmineMcpPlugin::SUPPORTED_PROTOCOL_VERSIONS,
@@ -65,7 +52,6 @@ module RedmineMcpPlugin
       )
     end
 
-    # 2025-06-18 / 2025-11-25 handshake.
     def initialize_result(params)
       requested = params['protocolVersion']
       {
@@ -94,11 +80,8 @@ module RedmineMcpPlugin
       name = params['name'].to_s
       tool_class = Registry.find(name, user)
 
-      # Registry.find already filters by permission, so an unavailable tool and
-      # an unknown tool are indistinguishable here -- deliberately. Saying
-      # "exists but forbidden" tells a caller what the server can do for someone
-      # else. Both therefore leave as PermissionError and become -32602, which
-      # is the code the spec asks for on an unknown tool.
+      # Do not distinguish unavailable tools from unknown ones; doing so would
+      # disclose capabilities the caller cannot use.
       raise PermissionError, "Unknown tool: #{name}" if tool_class.nil?
 
       arguments = params['arguments']

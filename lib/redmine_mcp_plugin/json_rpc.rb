@@ -1,15 +1,9 @@
 # frozen_string_literal: true
 
 module RedmineMcpPlugin
-  # Minimal JSON-RPC 2.0 helpers.
-  #
-  # This plugin deliberately does not depend on the `mcp` gem. Adding a gem to a
-  # Redmine plugin means `bundle install` has to re-resolve the whole
-  # application's gem set, and a failed resolve does not degrade the plugin --
-  # it stops Redmine booting. The wire protocol we need is a few hundred lines
-  # of JSON shaping, so we own it and Redmine's Gemfile is untouched.
+  # Minimal JSON-RPC 2.0 helpers that avoid adding an MCP dependency to the host
+  # application's resolved gem set.
   module JsonRpc
-    # Standard JSON-RPC codes.
     PARSE_ERROR      = -32_700
     INVALID_REQUEST  = -32_600
     METHOD_NOT_FOUND = -32_601

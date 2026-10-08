@@ -1,22 +1,13 @@
 # frozen_string_literal: true
 
 module RedmineMcpPlugin
-  # Protocol-version negotiation across three MCP revisions.
-  #
-  # 2026-07-28 made MCP stateless: no initialize handshake, no Mcp-Session-Id,
-  # and each request carries its own version in params._meta under
-  # 'io.modelcontextprotocol/protocolVersion'. Servers MUST implement
-  # server/discover.
-  #
-  # 2025-06-18 and 2025-11-25 negotiate once via initialize and then send the
-  # agreed version in the MCP-Protocol-Version header. Shipped clients still do
-  # this, so both paths are served.
+  # Negotiates stateless MCP revisions through per-request metadata and supports
+  # the initialize/header handshake required by older shipped clients.
   module Protocol
     META_VERSION_KEY      = 'io.modelcontextprotocol/protocolVersion'
     META_CLIENT_INFO_KEY  = 'io.modelcontextprotocol/clientInfo'
     META_SERVER_INFO_KEY  = 'io.modelcontextprotocol/serverInfo'
 
-    # Revisions that still expect initialize/notifications/initialized.
     HANDSHAKE_VERSIONS = %w[2025-06-18 2025-11-25].freeze
 
     module_function
