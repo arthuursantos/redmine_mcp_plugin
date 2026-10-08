@@ -31,7 +31,13 @@ class McpControllerTest < Redmine::ControllerTest
   end
 
   def post_mcp(payload, headers = {})
-    post :handle, body: payload, as: :json, headers: headers
+    @request.headers.merge!(
+      'Authorization' => nil,
+      'X-Redmine-API-Key' => nil,
+      'Origin' => nil
+    )
+    @request.headers.merge!(headers)
+    post :handle, body: payload
   end
 
   def json_body
@@ -40,6 +46,16 @@ class McpControllerTest < Redmine::ControllerTest
 
   def api_key_headers(user)
     { 'X-Redmine-API-Key' => user.api_key }
+  end
+
+  def oauth_headers(user, scopes:)
+    application = Doorkeeper::Application.create!(
+      name: 'MCP controller test', redirect_uri: 'https://client.example/callback', scopes: scopes
+    )
+    token = Doorkeeper::AccessToken.create!(
+      application_id: application.id, resource_owner_id: user.id, scopes: scopes, expires_in: 7200
+    )
+    { 'Authorization' => "Bearer #{token.plaintext_token}" }
   end
 
   def test_endpoint_is_off_until_enabled
@@ -76,6 +92,13 @@ class McpControllerTest < Redmine::ControllerTest
     assert_equal RedmineMcpPlugin::JsonRpc::PARSE_ERROR, json_body['error']['code']
   end
 
+  def test_authentication_precedes_json_rpc_parsing
+    post_mcp '{not json'
+
+    assert_response :unauthorized
+    assert_equal 'Authentication failed', json_body['error']
+  end
+
   def test_batches_are_refused
     post_mcp [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }].to_json, api_key_headers(User.find(2))
     assert_response :bad_request
@@ -95,18 +118,26 @@ class McpControllerTest < Redmine::ControllerTest
   end
 
   def test_get_returns_405_because_there_is_no_stream
+    @request.headers.merge!(api_key_headers(User.find(2)))
     get :stream
     assert_response :method_not_allowed
   end
 
   def test_unknown_method_is_method_not_found
     post_mcp rpc('nonsense/method'), api_key_headers(User.find(2))
-    assert_equal RedmineMcpPlugin::JsonRpc::METHOD_NOT_FOUND, json_body['error']['code']
+    assert_equal JsonRpcHandler::ErrorCode::METHOD_NOT_FOUND, json_body['error']['code']
   end
 
   def test_foreign_origin_is_rejected
     post_mcp rpc('tools/list'), api_key_headers(User.find(2)).merge('Origin' => 'https://evil.example')
     assert_response :forbidden
+  end
+
+  def test_foreign_origin_is_rejected_before_authentication
+    post_mcp rpc('tools/list'), 'Origin' => 'https://evil.example'
+
+    assert_response :forbidden
+    assert_equal 'Origin not allowed', json_body['error']
   end
 
   def test_configured_origin_is_allowed
@@ -123,23 +154,43 @@ class McpControllerTest < Redmine::ControllerTest
   def test_server_discover_advertises_versions
     post_mcp rpc('server/discover'), api_key_headers(User.find(2))
     assert_response :success
-    assert_equal RedmineMcpPlugin::SUPPORTED_PROTOCOL_VERSIONS, json_body['result']['protocolVersions']
+    assert_equal ['2026-07-28'], json_body['result']['supportedVersions']
   end
 
-  def test_initialize_echoes_supported_version
-    post_mcp rpc('initialize', { 'protocolVersion' => '2025-06-18' }), api_key_headers(User.find(2))
+  def test_initialize_echoes_supported_handshake_version
+    post_mcp rpc('initialize', initialize_params('2025-06-18')), api_key_headers(User.find(2))
     assert_equal '2025-06-18', json_body['result']['protocolVersion']
   end
 
-  def test_tools_list_is_cacheable_but_private
+  def test_initialize_counteroffers_a_handshake_version_for_a_modern_version
+    post_mcp rpc('initialize', initialize_params('2026-07-28')), api_key_headers(User.find(2))
+
+    assert_equal '2025-11-25', json_body['result']['protocolVersion']
+  end
+
+  def test_server_protocol_state_is_isolated_per_request
+    headers = api_key_headers(User.find(2))
+    payload = rpc('initialize', initialize_params('2025-11-25'))
+
+    2.times do
+      post_mcp payload, headers
+      assert_equal '2025-11-25', json_body.dig('result', 'protocolVersion')
+    end
+  end
+
+  def test_legacy_tools_list_has_no_modern_result_or_cache_metadata
     post_mcp rpc('tools/list'), api_key_headers(User.find(2))
-    assert_equal 'private', json_body['result']['cacheScope']
-    assert json_body['result']['ttlMs'].to_i.positive?
+    result = json_body['result']
+
+    assert_not result.key?('resultType')
+    assert_not result.key?('_meta')
+    assert_not result.key?('cacheScope')
+    assert_not result.key?('ttlMs')
   end
 
   def test_write_tools_are_hidden_in_read_only_mode
     post_mcp rpc('tools/list'), api_key_headers(User.find(1))
-    names = json_body['result']['tools'].map { |t| t['name'] }
+    names = json_body['result']['tools'].pluck('name')
     assert_not_includes names, 'create_issue'
     assert_includes names, 'search_issues'
   end
@@ -148,13 +199,23 @@ class McpControllerTest < Redmine::ControllerTest
     post_mcp rpc('tools/call', { 'name' => 'create_issue',
                                  'arguments' => { 'project' => 'ecookbook', 'subject' => 'x' } }),
              api_key_headers(User.find(1))
-    assert json_body['error'].present?
+    assert_equal(-32_602, json_body.dig('error', 'code'))
+    assert_equal 'Tool not found: create_issue', json_body.dig('error', 'data')
+  end
+
+  def test_unknown_tool_uses_the_same_not_found_error_as_a_hidden_tool
+    post_mcp rpc('tools/call', { 'name' => 'not_registered', 'arguments' => {} }),
+             api_key_headers(User.find(1))
+
+    assert_equal(-32_602, json_body.dig('error', 'code'))
+    assert_equal 'Invalid params', json_body.dig('error', 'message')
+    assert_equal 'Tool not found: not_registered', json_body.dig('error', 'data')
   end
 
   def test_write_tools_appear_when_read_only_is_off
     enable_mcp('read_only' => '0')
     post_mcp rpc('tools/list'), api_key_headers(User.find(1))
-    assert_includes json_body['result']['tools'].map { |t| t['name'] }, 'create_issue'
+    assert_includes json_body['result']['tools'].pluck('name'), 'create_issue'
   end
 
   def test_whoami_reports_the_authenticated_user
@@ -163,6 +224,54 @@ class McpControllerTest < Redmine::ControllerTest
     assert_equal 2, payload['id']
     assert_equal 'api_key', payload['authentication_mode']
     assert_nil payload['oauth_scopes']
+  end
+
+  def test_oauth_scope_narrows_the_users_redmine_permissions
+    user = User.find(2)
+
+    post_mcp rpc('tools/list'), api_key_headers(user)
+    api_key_tools = json_body['result']['tools'].pluck('name')
+    assert_includes api_key_tools, 'list_projects'
+    assert_includes api_key_tools, 'search_issues'
+
+    oauth = oauth_headers(user, scopes: 'view_issues')
+    post_mcp rpc('tools/list'), oauth
+    oauth_tools = json_body['result']['tools'].pluck('name')
+    assert_not_includes oauth_tools, 'list_projects'
+    assert_includes oauth_tools, 'search_issues'
+
+    post_mcp rpc('tools/call', { 'name' => 'whoami' }), oauth
+    identity = json_body.dig('result', 'structuredContent')
+    assert_equal 'oauth2', identity['authentication_mode']
+    assert_equal ['view_issues'], identity['oauth_scopes']
+  end
+
+  def test_sdk_schema_failure_is_an_error_tool_result
+    post_mcp rpc('tools/call', { 'name' => 'get_project', 'arguments' => {} }),
+             api_key_headers(User.find(2))
+
+    assert json_body.dig('result', 'isError')
+    assert_equal 'Missing required arguments: project', json_body.dig('result', 'content', 0, 'text')
+  end
+
+  def test_unexpected_tool_exception_does_not_leak_internal_details
+    secret = 'private-database-detail-/var/redmine'
+    Issue.stubs(:visible).raises(StandardError, secret)
+
+    post_mcp rpc('tools/call', { 'name' => 'get_issue', 'arguments' => { 'id' => 1 } }),
+             api_key_headers(User.find(2))
+
+    assert_equal(-32_603, json_body.dig('error', 'code'))
+    assert_equal 'Internal error', json_body.dig('error', 'message')
+    assert_equal 'Internal error calling tool get_issue', json_body.dig('error', 'data')
+    assert_not_includes response.body, secret
+  end
+
+  def test_control_characters_are_not_rejected_at_the_mcp_boundary
+    post_mcp rpc('tools/call', { 'name' => 'search_issues', 'arguments' => { 'query' => "a\u0007b" } }),
+             api_key_headers(User.find(2))
+
+    assert_not json_body.dig('result', 'isError')
   end
 
   # Keep invisible and nonexistent issues indistinguishable to prevent record
@@ -180,7 +289,7 @@ class McpControllerTest < Redmine::ControllerTest
     user = User.find(7)
     post_mcp rpc('tools/call', { 'name' => 'search_issues', 'arguments' => { 'status' => 'all' } }),
              api_key_headers(user)
-    returned = json_body['result']['structuredContent']['issues'].map { |i| i['id'] }
+    returned = json_body['result']['structuredContent']['issues'].pluck('id')
     assert_equal returned.sort, Issue.visible(user).where(id: returned).pluck(:id).sort
     assert Issue.count > returned.size, 'fixture set should be larger than what one user can see'
   end
@@ -190,5 +299,15 @@ class McpControllerTest < Redmine::ControllerTest
     post_mcp rpc('tools/call', { 'name' => 'list_users' }), api_key_headers(user)
     total = json_body['result']['structuredContent']['total_count']
     assert_equal Principal.visible(user).where(type: 'User').active.count, total
+  end
+
+  private
+
+  def initialize_params(version)
+    {
+      'protocolVersion' => version,
+      'capabilities' => {},
+      'clientInfo' => { 'name' => 'controller-test', 'version' => '1.0.0' }
+    }
   end
 end

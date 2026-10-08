@@ -10,8 +10,8 @@ module RedmineMcpPlugin
           Tools::WhoAmI,
           Tools::ListProjects,
           Tools::GetProject,
-          Tools::SearchIssues,
           Tools::GetIssue,
+          Tools::SearchIssues,
           Tools::ListWikiPages,
           Tools::GetWikiPage,
           Tools::ListEnumerations,
@@ -19,17 +19,6 @@ module RedmineMcpPlugin
           Tools::CreateIssue,
           Tools::AddIssueNote
         ]
-      end
-
-      # Tools this user may see. tools/list is permitted to vary by the
-      # authorization on the request; the 2026-07-28 spec says so explicitly,
-      # so a scope-narrowed token does not see tools it cannot call.
-      def visible_to(user)
-        all.select { |tool| tool.available_to?(user) }
-      end
-
-      def find(name, user)
-        visible_to(user).detect { |tool| tool.mcp_name == name.to_s }
       end
     end
   end

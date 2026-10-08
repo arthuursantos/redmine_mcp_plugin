@@ -2,12 +2,11 @@
 
 module RedmineMcpPlugin
   module Tools
-    class ListEnumerations < Tool
-      tool 'list_enumerations',
-           title: 'List trackers, statuses and priorities',
-           description: 'List the trackers, issue statuses and priorities configured on this Redmine.',
-           permission: nil,
-           schema: { 'type' => 'object', 'additionalProperties' => false }
+    class ListEnumerations < Base
+      tool_name 'list_enumerations'
+      title 'List trackers, statuses and priorities'
+      description 'List the trackers, issue statuses and priorities configured on this Redmine.'
+      input_schema('type' => 'object', 'additionalProperties' => false)
 
       private
 
