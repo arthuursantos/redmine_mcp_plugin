@@ -34,8 +34,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_rejected({}, 'Missing required argument: project')
   end
 
-  # The bug this class exists for. 'Closed' used to fall through to the open
-  # branch and return open issues, which is indistinguishable from success.
   def test_enum_is_case_sensitive_and_refuses_near_misses
     assert_rejected({ 'project' => 'x', 'status' => 'Closed' }, 'status must be one of open, closed, all')
     assert_rejected({ 'project' => 'x', 'status' => 'New' }, 'status must be one of')
@@ -61,8 +59,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_rejected({ 'project' => { 'a' => 1 } }, 'an object')
   end
 
-  # Clients assembled out of shell pipelines and templates send everything as a
-  # string; refusing those would break callers for no benefit.
   def test_stringified_scalars_are_accepted
     assert_nothing_raised do
       V.validate!(SCHEMA, { 'project' => 'x', 'limit' => '10', 'assigned_to_me' => 'true' })
@@ -74,8 +70,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_includes error.message, 'Accepted: assigned_to_me, limit, offset, project, status'
   end
 
-  # A NUL reached the database as a bind parameter and came back as -32603
-  # Internal error, which told the caller nothing at all.
   def test_control_characters_are_refused
     assert_rejected({ 'project' => "a\u0000b" }, 'control character')
     assert_rejected({ 'project' => "a\u0007b" }, 'control character')
@@ -89,8 +83,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_nothing_raised { V.validate!(SCHEMA, { 'project' => 'x', 'status' => nil }) }
   end
 
-  # The project arguments declare %w[string integer]: fetch_project has always
-  # taken either an identifier or a numeric id.
   def test_a_list_of_types_accepts_any_of_them
     schema = { 'type' => 'object',
                'properties' => { 'project' => { 'type' => %w[string integer] } },
@@ -109,9 +101,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_nothing_raised { V.validate!({}, { 'anything' => 1 }) }
   end
 
-  # The string "false" is truthy in Ruby. check_type! accepts it, because
-  # clients built out of shell pipelines send booleans as strings, so coerce
-  # has to be what stops it reading as true.
   def test_coerce_turns_string_booleans_into_booleans
     coerced = V.coerce(SCHEMA, { 'project' => 'x', 'assigned_to_me' => 'false' })
     assert_equal false, coerced['assigned_to_me']
@@ -130,8 +119,6 @@ class RedmineMcpPluginSchemaValidatorTest < ActiveSupport::TestCase
     assert_equal 10, coerced['limit']
   end
 
-  # project is declared %w[string integer], so there is no single right answer
-  # and fetch_project accepts either. Leave it exactly as it arrived.
   def test_coerce_leaves_ambiguous_types_alone
     schema = { 'properties' => { 'project' => { 'type' => %w[string integer] } } }
     assert_equal '42', V.coerce(schema, { 'project' => '42' })['project']

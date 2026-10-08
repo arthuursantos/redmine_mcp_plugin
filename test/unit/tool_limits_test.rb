@@ -2,9 +2,6 @@
 
 require File.expand_path('../test_helper', __dir__)
 
-# limit_for and offset_for clamp as well as cap. SchemaValidator rejects values
-# below a declared minimum, but only for a tool that declares one, so the
-# clamping is what protects a list tool whose schema omits it.
 class RedmineMcpPluginToolLimitsTest < ActiveSupport::TestCase
   class Probe < RedmineMcpPlugin::Tool
     tool 'probe', title: 'Probe', description: 'test', schema: { 'type' => 'object' }

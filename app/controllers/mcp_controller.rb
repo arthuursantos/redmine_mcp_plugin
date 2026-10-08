@@ -1,16 +1,10 @@
 # frozen_string_literal: true
 
-# The MCP endpoint. One path, POST/GET/DELETE, per the Streamable HTTP transport.
-#
-# Everything security-relevant happens here or in Authenticator; the Dispatcher
-# below is pure protocol.
+# Serves the MCP Streamable HTTP endpoint. This controller and Authenticator own
+# the security boundary; Dispatcher handles only protocol messages.
 class McpController < ApplicationController
-  # Core's CSRF check applies to cookie-authenticated requests. For the token
-  # modes there is no ambient credential to forge, and an MCP client cannot
-  # obtain a Rails authenticity token, so the check is skipped -- and the
-  # session mode compensates with a mandatory Origin check in
-  # verify_origin below. Skipping this without that check would turn the
-  # optional session mode into a CSRF hole.
+  # Token clients cannot provide Rails CSRF tokens. Cookie authentication
+  # remains protected by the mandatory Origin check in #verify_origin.
   skip_before_action :verify_authenticity_token
 
   # Core's check_if_login_required runs before our authentication and would
@@ -23,7 +17,6 @@ class McpController < ApplicationController
   before_action :authenticate_mcp_request
   before_action :verify_protocol_version
 
-  # POST carries every JSON-RPC message.
   def handle
     body = request.body.read.to_s
 
@@ -33,8 +26,7 @@ class McpController < ApplicationController
       return render_rpc(RedmineMcpPlugin::JsonRpc.error(nil, RedmineMcpPlugin::JsonRpc::PARSE_ERROR, 'Parse error'), :bad_request)
     end
 
-    # Batches were removed from the protocol in 2025-06-18. Refusing them
-    # explicitly beats processing element zero and silently dropping the rest.
+    # Supported MCP revisions forbid batches; never process only part of one.
     if message.is_a?(Array)
       return render_rpc(
         RedmineMcpPlugin::JsonRpc.error(nil, RedmineMcpPlugin::JsonRpc::INVALID_REQUEST,
@@ -50,9 +42,6 @@ class McpController < ApplicationController
       )
     end
 
-    # `jsonrpc` is a required member and MUST be exactly "2.0". This was not
-    # checked, so a request that omitted it was answered normally and the client
-    # never found out its envelope was malformed.
     unless message['jsonrpc'] == '2.0'
       return render_rpc(
         RedmineMcpPlugin::JsonRpc.error(message['id'], RedmineMcpPlugin::JsonRpc::INVALID_REQUEST,
@@ -61,8 +50,8 @@ class McpController < ApplicationController
       )
     end
 
-    # A notification or a response gets 202 Accepted with no body, per the
-    # transport spec. notifications/initialized from an older client lands here.
+    # A notification gets 202 Accepted with no body, per the transport spec.
+    # notifications/initialized from an older client lands here.
     if RedmineMcpPlugin::JsonRpc.notification?(message)
       return head :accepted
     end
@@ -73,16 +62,13 @@ class McpController < ApplicationController
     render_rpc(dispatcher.call(message), :ok)
   end
 
-  # The transport allows a server with no server-to-client stream to answer GET
-  # with 405. This server never pushes notifications, so that is the honest
-  # answer -- and 2026-07-28 removed the GET stream from the protocol anyway.
+  # Returns 405 because this server provides no server-to-client stream.
   def stream
     render json: { error: 'This server does not offer a server-to-client stream' },
            status: :method_not_allowed
   end
 
-  # Sessions were removed in 2026-07-28 and this server never issued one in the
-  # first place, so there is nothing to delete.
+  # Returns 405 because this server never issues transport sessions.
   def terminate
     head :method_not_allowed
   end
@@ -99,8 +85,8 @@ class McpController < ApplicationController
 
   # DNS-rebinding protection, which the transport spec makes a MUST.
   #
-  # Non-browser MCP clients send no Origin header, so they are unaffected. A
-  # browser always sends one, which is what makes this an effective guard for
+  # MCP clients outside a browser normally send no Origin header, so they are
+  # unaffected. A browser sends one, which makes this an effective guard for
   # the cookie-authenticated mode.
   def verify_origin
     origin = request.headers['Origin'].presence
@@ -115,13 +101,9 @@ class McpController < ApplicationController
     result = RedmineMcpPlugin::Authenticator.new(request, self).authenticate
 
     unless result.ok?
-      # WWW-Authenticate lets a spec-compliant MCP client discover that it
-      # should start an OAuth2 flow rather than simply reporting a failure.
       if RedmineMcpPlugin::Settings.oauth2_auth? && result.status == :unauthorized
-        # resource_metadata is the part a client actually needs (RFC 9728 5.1).
-        # With realm alone there is nothing to discover: the client knows it
-        # should present a bearer token but not which authorization server
-        # issues one, which is where every automated OAuth2 flow stopped.
+        # RFC 9728 resource metadata tells the client which authorization server
+        # can issue the required bearer token.
         response.set_header(
           'WWW-Authenticate',
           %(Bearer realm="Redmine", resource_metadata="#{oauth_protected_resource_url}")
@@ -134,7 +116,6 @@ class McpController < ApplicationController
     @mcp_auth = { mode: result.mode, scopes: result.scopes }
   end
 
-  # The transport requires 400 for an unsupported MCP-Protocol-Version.
   def verify_protocol_version
     header = request.headers['MCP-Protocol-Version'].presence
     @mcp_protocol_version = header || RedmineMcpPlugin::FALLBACK_PROTOCOL_VERSION

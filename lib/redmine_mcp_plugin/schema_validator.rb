@@ -1,28 +1,14 @@
 # frozen_string_literal: true
 
 module RedmineMcpPlugin
-  # Enforces the inputSchema each tool declares.
-  #
-  # The schemas used to be documentation only, and a model cannot detect the
-  # difference. search_issues declared `status` as enum [open closed all] but
-  # fell through to `else scope.open`, so `status: "Closed"` answered with open
-  # issues -- a plausible reply to a question nobody asked, with no error to
-  # react to. list_projects declared `minimum: 1` on `limit` and returned a full
-  # page for `limit: 0`. Whatever the schema promises a client is now checked
-  # here, once, before #perform sees the arguments.
-  #
-  # Not a JSON Schema implementation: it covers the keywords these tools
-  # actually declare, listed in ENFORCED. Adding a keyword to a tool schema
-  # without teaching it to this file leaves that keyword unenforced, so keep the
-  # two in step.
+  # Enforces each tool's input schema before execution. This is not a complete
+  # JSON Schema implementation: only ENFORCED keywords are checked, so new
+  # schema keywords must be implemented here before tools rely on them.
   module SchemaValidator
     ENFORCED = %w[type enum minimum required additionalProperties].freeze
 
-    # Rails will not round-trip a NUL through a bind parameter -- PostgreSQL
-    # rejects it outright, and the exception surfaced as -32603 Internal error,
-    # which tells the caller nothing. The other C0 controls are equally never
-    # meaningful in an identifier or a search needle. Tab, newline and carriage
-    # return are left alone: they are legal inside a wiki page title.
+    # Reject controls that databases cannot safely round-trip while retaining
+    # tab, newline, and carriage return for valid wiki titles.
     FORBIDDEN_CONTROL = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/
 
     module_function
@@ -45,18 +31,8 @@ module RedmineMcpPlugin
       end
     end
 
-    # Returns arguments with declared scalars converted to real Ruby types.
-    #
-    # Call this after validate!. The string "false" is truthy in Ruby, so a
-    # client that sends `{"assigned_to_me": "false"}` -- which check_type!
-    # accepts, because shell-built clients send booleans as strings -- would
-    # otherwise have it read as true. That is the same failure as the original
-    # status enum bug: a plausible answer to a question nobody asked, with no
-    # error to react to.
-    #
-    # Only unambiguous declarations are converted. A property declared
-    # `%w[string integer]`, as the project arguments are, is left exactly as it
-    # came in; fetch_project already accepts either.
+    # Converts validated scalar arguments to unambiguous Ruby types. Properties
+    # that declare multiple types remain unchanged.
     def coerce(schema, arguments)
       return arguments if schema.blank?
 
@@ -108,8 +84,7 @@ module RedmineMcpPlugin
     # pipelines and templates routinely send "5" for an integer and "true" for a
     # boolean. Those are accepted; anything genuinely unparseable is not.
     #
-    # `type` may be a list, which is how the project arguments state what they
-    # have always accepted: an identifier or a numeric id.
+    # `type` may list alternatives, such as a project identifier or numeric id.
     def check_type!(key, type, value)
       return if type.nil?
 
@@ -146,8 +121,8 @@ module RedmineMcpPlugin
       return if allowed.blank?
       return if allowed.include?(value)
 
-      # Case is not forgiven on purpose. Quietly accepting "Closed" for "closed"
-      # is precisely how the original bug read to a caller: like success.
+      # Case-sensitive matching makes mistyped filters fail instead of changing
+      # the requested query silently.
       raise ToolError, "#{key} must be one of #{allowed.join(', ')}, got #{value.inspect}"
     end
 

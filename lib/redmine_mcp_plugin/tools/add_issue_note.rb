@@ -29,10 +29,8 @@ module RedmineMcpPlugin
         authorize!(:add_issue_notes, issue.project)
         raise ToolError, 'notes must not be empty' if arguments['notes'].to_s.strip.empty?
 
-        # Order matters and is easy to get wrong. Issue delegates
-        # private_notes= to current_journal with allow_nil: true (issue.rb:70),
-        # so setting it before init_journal is silently swallowed and the note
-        # is created public. Create the journal first, then mark it.
+        # Issue delegates private_notes= to current_journal with allow_nil, so
+        # initialize the journal first or the private flag is silently dropped.
         issue.init_journal(user, arguments['notes'].to_s)
 
         if arguments['private']

@@ -21,12 +21,8 @@ module RedmineMcpPlugin
       private
 
       def perform(arguments)
-        # Principal.visible, not User.all. Redmine's own users list is
-        # require_admin, and each role carries a users_visibility setting of
-        # 'all' or 'members_of_visible_projects'. Enumerating User.all here
-        # would hand the whole directory -- logins, names, last login times --
-        # to any authenticated caller, which is strictly more than the same
-        # user can see through the web interface or the REST API.
+        # Principal.visible enforces role-level users_visibility; User.all would
+        # expose directory records the caller cannot see elsewhere in Redmine.
         scope = Principal.visible(user).where(type: 'User').active
 
         if (needle = arguments['name'].presence)

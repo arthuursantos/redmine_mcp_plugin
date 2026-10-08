@@ -2,8 +2,6 @@
 
 require File.expand_path('../test_helper', __dir__)
 
-# POST /oauth/registration end to end. The per-request policy is unit-tested in
-# test/unit/dynamic_client_registration_test.rb.
 class OauthRegistrationTest < Redmine::IntegrationTest
   def setup
     super
@@ -54,8 +52,6 @@ class OauthRegistrationTest < Redmine::IntegrationTest
     assert_response :created
   end
 
-  # A permission name advertised by the discovery document is accepted as a scope
-  # (Redmine core registers them as Doorkeeper optional_scopes).
   def test_registration_accepts_a_permission_name_scope
     assert_difference 'Doorkeeper::Application.count', 1 do
       register public_client_body.merge(scope: 'view_issues')

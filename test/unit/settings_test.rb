@@ -15,10 +15,6 @@ class RedmineMcpPluginSettingsTest < ActiveSupport::TestCase
     yield
   end
 
-  # The regression this whole module exists to prevent: before an administrator
-  # saves the form, Redmine hands back init.rb's defaults hash verbatim. If that
-  # hash is keyed by symbols, every string-keyed read returns nil and the plugin
-  # silently behaves as though everything is switched off.
   def test_symbol_keyed_settings_are_readable
     with_settings_hash(enabled: 'true', read_only: 'false') do
       assert S.enabled?
@@ -33,7 +29,6 @@ class RedmineMcpPluginSettingsTest < ActiveSupport::TestCase
     end
   end
 
-  # Checkboxes post '1'/'0'; DEFAULTS uses 'true'/'false'. Both must work.
   def test_bool_accepts_both_encodings
     with_settings_hash('enabled' => 'true')  { assert S.enabled? }
     with_settings_hash('enabled' => '1')     { assert S.enabled? }
@@ -42,9 +37,6 @@ class RedmineMcpPluginSettingsTest < ActiveSupport::TestCase
     with_settings_hash({})                   { assert_not S.enabled? }
   end
 
-  # dcr_enabled gates dynamic client registration. Off by default, and like
-  # every other flag it must read correctly whether the hash is keyed by symbols
-  # (fresh from DEFAULTS) or strings (after an admin saves).
   def test_dcr_enabled_defaults_off_and_reads_both_key_styles
     with_settings_hash({})                      { assert_not S.dcr_enabled? }
     with_settings_hash(S::DEFAULTS)             { assert_not S.dcr_enabled? }

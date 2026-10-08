@@ -1,12 +1,8 @@
 # frozen_string_literal: true
 
 module RedmineMcpPlugin
-  # The set of tools this server exposes.
-  #
-  # Explicit list, not a Dir.glob over the tools directory. A glob means a stray
-  # file dropped into plugins/redmine_mcp_plugin/lib/.../tools/ becomes a live,
-  # authenticated endpoint; requiring an edit here makes adding a tool a visible
-  # act in the diff.
+  # Explicitly registers exposed tools so a stray file cannot become an
+  # authenticated endpoint without a visible registry change.
   module Registry
     class << self
       def all
@@ -27,7 +23,7 @@ module RedmineMcpPlugin
 
       # Tools this user may see. tools/list is permitted to vary by the
       # authorization on the request; the 2026-07-28 spec says so explicitly,
-      # and it means a scope-narrowed token is not shown tools it cannot call.
+      # so a scope-narrowed token does not see tools it cannot call.
       def visible_to(user)
         all.select { |tool| tool.available_to?(user) }
       end

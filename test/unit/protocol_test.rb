@@ -26,8 +26,6 @@ class RedmineMcpPluginProtocolTest < ActiveSupport::TestCase
     assert_equal RedmineMcpPlugin::PREFERRED_PROTOCOL_VERSION, P.negotiate_initialize(nil)
   end
 
-  # 2026-07-28 carries the version per-request in params._meta; it must win over
-  # the transport header, which is the older revisions' mechanism.
   def test_meta_version_beats_header
     params = { '_meta' => { P::META_VERSION_KEY => '2026-07-28' } }
     assert_equal '2026-07-28', P.negotiate(params: params, header: '2025-06-18')
@@ -41,8 +39,6 @@ class RedmineMcpPluginProtocolTest < ActiveSupport::TestCase
     assert_equal RedmineMcpPlugin::FALLBACK_PROTOCOL_VERSION, P.negotiate(params: {}, header: nil)
   end
 
-  # Older clients ignore both of these, and the spec tells them to treat a
-  # missing resultType as "complete", so decorating unconditionally is safe.
   def test_decorate_adds_result_type_and_server_info
     decorated = P.decorate(foo: 'bar')
     assert_equal 'bar', decorated[:foo]
@@ -50,8 +46,6 @@ class RedmineMcpPluginProtocolTest < ActiveSupport::TestCase
     assert_equal P.server_info, decorated[:_meta][P::META_SERVER_INFO_KEY]
   end
 
-  # Declaring a capability this server cannot answer would send conformant
-  # clients down a path that dead-ends.
   def test_capabilities_advertise_only_tools
     assert_equal({ tools: {} }, P.capabilities)
   end
