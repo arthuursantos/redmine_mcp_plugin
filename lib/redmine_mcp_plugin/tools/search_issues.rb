@@ -2,30 +2,30 @@
 
 module RedmineMcpPlugin
   module Tools
-    class SearchIssues < Tool
-      tool 'search_issues',
-           title: 'Search issues',
-           description: 'Search issues visible to the authenticated user. All filters are optional ' \
-                        'and are combined with AND. Returns newest-updated first.',
-           permission: :view_issues,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'project' => { 'type' => %w[string integer],
-                             'description' => 'Restrict to one project (identifier or numeric id).' },
-               'query' => { 'type' => 'string', 'description' => 'Case-insensitive substring matched against subject and description.' },
-               'status' => { 'type' => 'string', 'enum' => %w[open closed all],
-                             'description' => 'Issue status filter. Defaults to open.' },
-               'tracker' => { 'type' => 'string', 'description' => 'Tracker name, e.g. Bug.' },
-               'assigned_to_me' => { 'type' => 'boolean', 'description' => 'Only issues assigned to the authenticated user.' },
-               'updated_since' => { 'type' => 'string', 'format' => 'date',
-                                    'description' => 'Only issues updated on or after this ISO-8601 date.' },
-               'offset' => { 'type' => 'integer', 'minimum' => 0,
-                             'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
-               'limit' => { 'type' => 'integer', 'minimum' => 1, 'description' => 'Maximum issues to return.' }
-             },
-             'additionalProperties' => false
-           }
+    class SearchIssues < Base
+      tool_name 'search_issues'
+      title 'Search issues'
+      description 'Search issues visible to the authenticated user. All filters are optional ' \
+                  'and are combined with AND. Returns newest-updated first.'
+      permission :view_issues
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'project' => { 'type' => %w[string integer],
+                         'description' => 'Restrict to one project (identifier or numeric id).' },
+          'query' => { 'type' => 'string', 'description' => 'Case-insensitive substring matched against subject and description.' },
+          'status' => { 'type' => 'string', 'enum' => %w[open closed all],
+                        'description' => 'Issue status filter. Defaults to open.' },
+          'tracker' => { 'type' => 'string', 'description' => 'Tracker name, e.g. Bug.' },
+          'assigned_to_me' => { 'type' => 'boolean', 'description' => 'Only issues assigned to the authenticated user.' },
+          'updated_since' => { 'type' => 'string', 'format' => 'date',
+                               'description' => 'Only issues updated on or after this ISO-8601 date.' },
+          'offset' => { 'type' => 'integer', 'minimum' => 0,
+                        'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
+          'limit' => { 'type' => 'integer', 'minimum' => 1, 'description' => 'Maximum issues to return.' }
+        },
+        'additionalProperties' => false
+      )
 
       private
 

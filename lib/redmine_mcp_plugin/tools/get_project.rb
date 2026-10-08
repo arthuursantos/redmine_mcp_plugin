@@ -2,20 +2,20 @@
 
 module RedmineMcpPlugin
   module Tools
-    class GetProject < Tool
-      tool 'get_project',
-           title: 'Get project',
-           description: 'Fetch one project by identifier or numeric id, with its enabled modules and trackers.',
-           permission: :view_project,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'project' => { 'type' => %w[string integer],
-                             'description' => 'Project identifier or numeric id.' }
-             },
-             'required' => %w[project],
-             'additionalProperties' => false
-           }
+    class GetProject < Base
+      tool_name 'get_project'
+      title 'Get project'
+      description 'Fetch one project by identifier or numeric id, with its enabled modules and trackers.'
+      permission :view_project
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'project' => { 'type' => %w[string integer],
+                         'description' => 'Project identifier or numeric id.' }
+        },
+        'required' => %w[project],
+        'additionalProperties' => false
+      )
 
       private
 

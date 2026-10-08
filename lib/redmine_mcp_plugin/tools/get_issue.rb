@@ -2,21 +2,21 @@
 
 module RedmineMcpPlugin
   module Tools
-    class GetIssue < Tool
-      tool 'get_issue',
-           title: 'Get issue',
-           description: 'Fetch one issue by id, with its description and optionally its notes and history.',
-           permission: :view_issues,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'id' => { 'type' => 'integer', 'description' => 'Issue id.' },
-               'include_journals' => { 'type' => 'boolean',
-                                       'description' => 'Include notes and change history. Defaults to true.' }
-             },
-             'required' => %w[id],
-             'additionalProperties' => false
-           }
+    class GetIssue < Base
+      tool_name 'get_issue'
+      title 'Get issue'
+      description 'Fetch one issue by id, with its description and optionally its notes and history.'
+      permission :view_issues
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'id' => { 'type' => 'integer', 'description' => 'Issue id.' },
+          'include_journals' => { 'type' => 'boolean',
+                                  'description' => 'Include notes and change history. Defaults to true.' }
+        },
+        'required' => %w[id],
+        'additionalProperties' => false
+      )
 
       private
 

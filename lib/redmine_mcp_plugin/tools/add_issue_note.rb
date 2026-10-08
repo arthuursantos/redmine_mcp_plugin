@@ -2,23 +2,23 @@
 
 module RedmineMcpPlugin
   module Tools
-    class AddIssueNote < Tool
-      tool 'add_issue_note',
-           title: 'Add note to issue',
-           description: 'Append a note (comment) to an existing issue.',
-           permission: :add_issue_notes,
-           write: true,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'id' => { 'type' => 'integer', 'description' => 'Issue id.' },
-               'notes' => { 'type' => 'string', 'description' => 'The note text.' },
-               'private' => { 'type' => 'boolean',
-                              'description' => 'Mark the note private. Requires the set_notes_private permission.' }
-             },
-             'required' => %w[id notes],
-             'additionalProperties' => false
-           }
+    class AddIssueNote < Base
+      tool_name 'add_issue_note'
+      title 'Add note to issue'
+      description 'Append a note (comment) to an existing issue.'
+      permission :add_issue_notes
+      write true
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'id' => { 'type' => 'integer', 'description' => 'Issue id.' },
+          'notes' => { 'type' => 'string', 'description' => 'The note text.' },
+          'private' => { 'type' => 'boolean',
+                         'description' => 'Mark the note private. Requires the set_notes_private permission.' }
+        },
+        'required' => %w[id notes],
+        'additionalProperties' => false
+      )
 
       private
 

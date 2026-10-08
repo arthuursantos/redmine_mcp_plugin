@@ -23,8 +23,8 @@ The repository is organized as follows:
   view.
 - `config/` contains host-mounted routes and translations.
 - `db/migrate/` contains plugin migrations executed against the Redmine database.
-- `lib/redmine_mcp_plugin/` contains protocol, authentication, dispatch, validation,
-  settings, and tool implementations.
+- `lib/redmine_mcp_plugin/` contains authentication, SDK server composition,
+  protocol-boundary helpers, settings, and SDK-backed tool implementations.
 - `test/` contains unit, functional, and integration tests that use Redmine's test
   application and database.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) describes the current host boundary,
@@ -57,7 +57,7 @@ bin/rails redmine:plugins:test NAME=redmine_mcp_plugin RAILS_ENV=test
 Run a focused test through the host test runner, for example:
 
 ```sh
-RAILS_ENV=test bin/rails test plugins/redmine_mcp_plugin/test/unit/protocol_test.rb
+RAILS_ENV=test bin/rails test plugins/redmine_mcp_plugin/test/unit/mcp_server_test.rb
 ```
 
 To reverse all migrations owned by this plugin in a disposable environment, run
@@ -76,9 +76,11 @@ tests were not run rather than substituting a plugin-only command.
 - Follow Zeitwerk naming. Every Ruby file under `lib/` must define the constant
   implied by its path. Redmine's plugin loader adds that directory to the main
   autoloader and eager-loads it in production, so do not add manual `require` calls
-  for plugin files to compensate for a naming mismatch. The lazy external-gem load
-  used by dynamic client registration is a deliberate exception documented in its
-  implementation.
+  for plugin files to compensate for a naming mismatch. External gems have two
+  documented loading exceptions: Bundler eagerly requires `mcp` before Zeitwerk
+  loads the `MCP::Tool` subclasses, while `doorkeeper-openid_connect` uses
+  `require: false` and is loaded lazily by dynamic client registration to avoid
+  early controller binding. Keep both contracts documented in `PluginGemfile`.
 - Treat authentication, authorization, OAuth and dynamic client registration,
   Origin checks, input validation, permission and visibility filtering, write
   gating, and migrations as security-sensitive. Preserve deny-by-default behavior,

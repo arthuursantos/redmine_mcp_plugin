@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Serves the MCP Streamable HTTP endpoint. This controller and Authenticator own
-# the security boundary; Dispatcher handles only protocol messages.
+# the security boundary; the MCP SDK handles protocol messages.
 class McpController < ApplicationController
   # Token clients cannot provide Rails CSRF tokens. Cookie authentication
   # remains protected by the mandatory Origin check in #verify_origin.
@@ -56,10 +56,12 @@ class McpController < ApplicationController
       return head :accepted
     end
 
-    dispatcher = RedmineMcpPlugin::Dispatcher.new(
-      user: User.current, auth: @mcp_auth, protocol_version: @mcp_protocol_version
+    tools = RedmineMcpPlugin::Registry.all.select { |tool| tool.available_to?(User.current) }
+    server = RedmineMcpPlugin::McpServer.build(
+      tools: tools,
+      server_context: { user: User.current, auth: @mcp_auth }
     )
-    render_rpc(dispatcher.call(message), :ok)
+    render_rpc(server.handle(message.deep_symbolize_keys), :ok)
   end
 
   # Returns 405 because this server provides no server-to-client stream.
@@ -118,8 +120,7 @@ class McpController < ApplicationController
 
   def verify_protocol_version
     header = request.headers['MCP-Protocol-Version'].presence
-    @mcp_protocol_version = header || RedmineMcpPlugin::FALLBACK_PROTOCOL_VERSION
-    return if header.nil? || RedmineMcpPlugin::Protocol.supported?(header)
+    return if header.nil? || RedmineMcpPlugin::SUPPORTED_PROTOCOL_VERSIONS.include?(header)
 
     render json: RedmineMcpPlugin::JsonRpc.error(
       nil, RedmineMcpPlugin::JsonRpc::UNSUPPORTED_PROTOCOL_VERSION,

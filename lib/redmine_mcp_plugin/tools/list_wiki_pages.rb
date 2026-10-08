@@ -2,23 +2,23 @@
 
 module RedmineMcpPlugin
   module Tools
-    class ListWikiPages < Tool
-      tool 'list_wiki_pages',
-           title: 'List wiki pages',
-           description: "List the titles of a project's wiki pages that the authenticated user may read.",
-           permission: :view_wiki_pages,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'project' => { 'type' => %w[string integer],
-                             'description' => 'Project identifier or numeric id.' },
-               'offset' => { 'type' => 'integer', 'minimum' => 0,
-                             'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
-               'limit' => { 'type' => 'integer', 'minimum' => 1 }
-             },
-             'required' => %w[project],
-             'additionalProperties' => false
-           }
+    class ListWikiPages < Base
+      tool_name 'list_wiki_pages'
+      title 'List wiki pages'
+      description "List the titles of a project's wiki pages that the authenticated user may read."
+      permission :view_wiki_pages
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'project' => { 'type' => %w[string integer],
+                         'description' => 'Project identifier or numeric id.' },
+          'offset' => { 'type' => 'integer', 'minimum' => 0,
+                        'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
+          'limit' => { 'type' => 'integer', 'minimum' => 1 }
+        },
+        'required' => %w[project],
+        'additionalProperties' => false
+      )
 
       private
 

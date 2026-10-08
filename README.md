@@ -161,7 +161,7 @@ test commands from the Redmine root:
 bundle install
 bin/rails redmine:plugins:migrate NAME=redmine_mcp_plugin RAILS_ENV=development
 bin/rails redmine:plugins:test NAME=redmine_mcp_plugin RAILS_ENV=test
-RAILS_ENV=test bin/rails test plugins/redmine_mcp_plugin/test/unit/protocol_test.rb
+RAILS_ENV=test bin/rails test plugins/redmine_mcp_plugin/test/unit/mcp_server_test.rb
 ```
 
 See the [coding agent guide](AGENTS.md) for repository conventions and the

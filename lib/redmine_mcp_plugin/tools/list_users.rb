@@ -2,21 +2,20 @@
 
 module RedmineMcpPlugin
   module Tools
-    class ListUsers < Tool
-      tool 'list_users',
-           title: 'List users',
-           description: 'Search the users visible to the authenticated user, by name or login.',
-           permission: nil,
-           schema: {
-             'type' => 'object',
-             'properties' => {
-               'name' => { 'type' => 'string', 'description' => 'Case-insensitive substring of login, first or last name.' },
-               'offset' => { 'type' => 'integer', 'minimum' => 0,
-                             'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
-               'limit' => { 'type' => 'integer', 'minimum' => 1 }
-             },
-             'additionalProperties' => false
-           }
+    class ListUsers < Base
+      tool_name 'list_users'
+      title 'List users'
+      description 'Search the users visible to the authenticated user, by name or login.'
+      input_schema(
+        'type' => 'object',
+        'properties' => {
+          'name' => { 'type' => 'string', 'description' => 'Case-insensitive substring of login, first or last name.' },
+          'offset' => { 'type' => 'integer', 'minimum' => 0,
+                        'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
+          'limit' => { 'type' => 'integer', 'minimum' => 1 }
+        },
+        'additionalProperties' => false
+      )
 
       private
 

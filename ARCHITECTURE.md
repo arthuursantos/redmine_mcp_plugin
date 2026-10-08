@@ -20,7 +20,7 @@ flowchart LR
     subgraph Plugin["redmine_mcp_plugin"]
       Routes["config/routes.rb"]
       Controller["McpController"]
-      Core["Authenticator, Protocol,<br/>Dispatcher, Registry, Tool"]
+      Core["Authenticator, McpServer / MCP::Server,<br/>Registry, Tools::Base &lt; MCP::Tool"]
       Tools["RedmineMcpPlugin::Tools"]
       PluginSettings["RedmineMcpPlugin::Settings"]
     end
@@ -45,18 +45,18 @@ flowchart LR
 
 The boxes inside `redmine_mcp_plugin` correspond to code owned here:
 
-- [`config/routes.rb`](../config/routes.rb) mounts the transport, OAuth metadata,
+- [`config/routes.rb`](config/routes.rb) mounts the transport, OAuth metadata,
   and optional dynamic-registration routes into the Rails router.
-- [`McpController`](../app/controllers/mcp_controller.rb) is the HTTP and security
+- [`McpController`](app/controllers/mcp_controller.rb) is the HTTP and security
   boundary for `/mcp`.
-- [`Authenticator`](../lib/redmine_mcp_plugin/authenticator.rb),
-  [`Protocol`](../lib/redmine_mcp_plugin/protocol.rb),
-  [`Dispatcher`](../lib/redmine_mcp_plugin/dispatcher.rb),
-  [`Registry`](../lib/redmine_mcp_plugin/registry.rb), and
-  [`Tool`](../lib/redmine_mcp_plugin/tool.rb) form the MCP core.
-- Classes under [`RedmineMcpPlugin::Tools`](../lib/redmine_mcp_plugin/tools/) adapt
+- [`Authenticator`](lib/redmine_mcp_plugin/authenticator.rb),
+  [`McpServer`](lib/redmine_mcp_plugin/mcp_server.rb),
+  [`Registry`](lib/redmine_mcp_plugin/registry.rb), and
+  [`Tools::Base`](lib/redmine_mcp_plugin/tools/base.rb) form the live MCP
+  core around the SDK's `MCP::Server` and `MCP::Tool`.
+- Classes under [`RedmineMcpPlugin::Tools`](lib/redmine_mcp_plugin/tools/) adapt
   MCP operations to Redmine models.
-- [`RedmineMcpPlugin::Settings`](../lib/redmine_mcp_plugin/settings.rb) is a typed
+- [`RedmineMcpPlugin::Settings`](lib/redmine_mcp_plugin/settings.rb) is a typed
   adapter over Redmine's plugin settings.
 
 The remaining boxes are supplied by the host. Rails provides routing, controller
@@ -78,10 +78,9 @@ sequenceDiagram
   participant S as RedmineMcpPlugin::Settings
   participant A as Authenticator
   participant H as Redmine and Doorkeeper
-  participant D as Dispatcher
+  participant SDK as McpServer / MCP::Server
   participant G as Registry
-  participant T as Tool subclass
-  participant V as SchemaValidator
+  participant T as Tools::Base subclass
   participant M as Redmine models
 
   C->>R: POST /mcp
@@ -94,36 +93,31 @@ sequenceDiagram
   H-->>A: user and OAuth scopes when applicable
   A-->>MC: authenticated result
   MC->>MC: verify_protocol_version and parse JSON-RPC
-  MC->>D: call(message)
+  MC->>G: all
+  G-->>MC: allowlisted tool classes
+  MC->>T: available_to?(user)
+  MC->>SDK: build(tools, user/auth context)
+  MC->>SDK: handle(message)
 
   alt tools/list
-    D->>G: visible_to(user)
-    G->>T: available_to?(user)
-    T->>S: read_only?
-    T->>H: User#allowed_to? when permission declared
-    G-->>D: caller-visible descriptors
+    SDK-->>MC: descriptors for mounted tools
   else tools/call
-    D->>G: find(name, user)
-    G->>T: available_to?(user)
-    T->>S: read_only?
-    T->>H: User#allowed_to? when permission declared
-    G-->>D: registered class or nil
-    D->>T: new(user, auth).call(arguments)
+    SDK->>SDK: resolve mounted tool and validate arguments
+    SDK->>T: call(server_context, arguments)
     T->>S: repeat read-only gate
     T->>H: repeat declared permission gate
-    T->>V: validate! then coerce
     T->>M: perform through applicable Redmine APIs
     M-->>T: result
-    T-->>D: structured payload
+    T-->>SDK: MCP::Tool::Response
   end
 
-  D-->>MC: JSON-RPC response
+  SDK-->>MC: JSON-RPC response
   MC-->>C: application/json
 ```
 
 The symbols in the sequence are implemented as follows:
 
-1. The Rails router uses [`config/routes.rb`](../config/routes.rb) to send `POST`
+1. The Rails router uses [`config/routes.rb`](config/routes.rb) to send `POST`
    to `McpController#handle`. `GET` and `DELETE` reach `#stream` and `#terminate`,
    which return 405 after the shared controller gates because the server provides
    neither a server-to-client stream nor transport sessions.
@@ -137,25 +131,53 @@ The symbols in the sequence are implemented as follows:
    the order OAuth2, API key, HTTP Basic, then session cookie. It returns an active
    Redmine `User`; OAuth also copies the token scopes to that user and retains them
    in the request authentication context.
-4. `McpController#verify_protocol_version` validates the
-   `MCP-Protocol-Version` header and selects the fallback when the header is absent.
-   `Protocol.negotiate_initialize` selects the version returned for an older
-   client's `initialize` request, while `Protocol.decorate` adds result metadata.
-   Supported revisions and the preferred and fallback revisions live in
-   [`lib/redmine_mcp_plugin.rb`](../lib/redmine_mcp_plugin.rb).
-5. After controller validation, `Dispatcher#call` handles `server/discover`,
-   `initialize`, `tools/list`, `tools/call`, and `ping`. [`JsonRpc`](../lib/redmine_mcp_plugin/json_rpc.rb)
-   builds response envelopes and error codes.
-6. `Registry.all` is the explicit allowlist of tool classes. `Registry.visible_to`
-   and `Registry.find` apply `Tool.available_to?` before listing or resolving a
-   tool.
-7. `Tool#call` repeats the write and permission gates, then invokes
-   [`SchemaValidator`](../lib/redmine_mcp_plugin/schema_validator.rb) to reject or
-   coerce arguments before calling the subclass's `#perform` method.
+4. `McpController#verify_protocol_version` validates a supplied
+   `MCP-Protocol-Version` header. The SDK negotiates `initialize` requests and
+   modern per-request envelopes. Supported transport revisions live in
+   [`lib/redmine_mcp_plugin.rb`](lib/redmine_mcp_plugin.rb).
+5. `Registry.all` is the explicit allowlist of tool classes. The controller
+   applies `Tools::Base.available_to?` before mounting tools on a request-local
+   server.
+6. [`McpServer`](lib/redmine_mcp_plugin/mcp_server.rb) configures the SDK's
+   exception reporter and builds an `MCP::Server` with the filtered tools plus
+   the authenticated user and authorization context. `MCP::Server#handle`
+   handles `server/discover`, `initialize`, `tools/list`, `tools/call`, `ping`,
+   JSON-RPC errors, negotiation, and schema validation.
+7. `Tools::Base#run` repeats the write and permission gates after SDK argument
+   validation, then calls the subclass's `#perform` method.
 8. Each tool reads or writes through Redmine models. Tools use Redmine visibility
    APIs such as `Project.visible`, `Issue.visible`, `Principal.visible`,
    `WikiPage#visible?`, visible custom fields, and visible journals, together with
    `User#allowed_to?` where the operation requires a permission.
+
+### Transport-free SDK seam
+
+The plugin does not mount an SDK transport. Rails routing, HTTP status codes,
+authentication, Origin checks, request-body parsing, transport-version headers,
+and response rendering remain in `McpController`. After those gates, the
+controller passes the parsed message directly to `MCP::Server#handle` and renders
+the returned Hash. `McpServer.build` is therefore the transport-free composition
+seam: it supplies server identity, the exception reporter, caller-visible tool
+classes, and the authenticated `server_context`, but no Rack, SSE, or session
+adapter. Keep SDK-backed tools independent of Rails request and response objects.
+
+### Error ownership
+
+Errors retain one owner across the controller-to-SDK seam:
+
+| Condition | Owner and wire result |
+|---|---|
+| Disabled endpoint, rejected Origin, or failed authentication | Controller HTTP error before MCP dispatch |
+| Malformed JSON, a batch, an invalid JSON-RPC envelope, or an unsupported `MCP-Protocol-Version` header | Controller plus `JsonRpc`; HTTP 400 with the applicable JSON-RPC error |
+| Unknown MCP method | SDK `MCP::Server#handle`; JSON-RPC method-not-found (`-32601`) |
+| Unknown tool, or a tool omitted by permission or read-only filtering | SDK `MCP::Server#handle`; JSON-RPC invalid-params (`-32602`) with the same tool-not-found shape |
+| SDK input-schema rejection | SDK tool result with `isError: true`; the tool body does not run |
+| Expected `ToolError` or `PermissionError` from an executing tool | `Tools::Base#run`; `MCP::Tool::Response` encoded as a result with `isError: true` |
+| Unexpected exception from an executing tool | SDK internal error (`-32603`); `McpServer` reports details to the Redmine log and the response stays sanitized |
+
+Do not recreate SDK-owned envelopes or codes in plugin code. `JsonRpc` is limited
+to errors that must be returned before `MCP::Server#handle` can safely run and to
+recognizing notifications at the HTTP boundary.
 
 ## Security invariants
 
@@ -184,11 +206,10 @@ whose Rails CSRF callback cannot protect token-oriented MCP requests.
 
 ### Read-only mode is enforced at discovery and execution
 
-`Tool.available_to?` removes write tools from `tools/list` and prevents
-`Registry.find` from resolving them while `Settings.read_only?` is true.
-`Tool#call` independently refuses a write tool, so execution stays protected even
-if a caller bypasses discovery or code later obtains a class directly. Read-only
-mode defaults on.
+`Tools::Base.available_to?` removes write tools before the request-local server
+is built while `Settings.read_only?` is true. `Tools::Base#run` independently
+refuses a write tool, so execution stays protected even if filtering is bypassed
+or the setting changes after server construction. Read-only mode defaults on.
 
 ### OAuth scopes narrow Redmine permissions
 
@@ -196,9 +217,9 @@ mode defaults on.
 `User#oauth_scope=`. Availability and execution of tools with a declared
 permission use `User#allowed_to?`, which therefore intersects Redmine role
 permissions with the token's narrower grant. Tools that require a project-scoped
-permission beyond a visible lookup call `Tool#authorize!` against the selected
-project. API-key, Basic, and session modes have no additional OAuth scope
-narrowing.
+permission beyond a visible lookup call `Tools::Base#authorize!` against the
+selected project. API-key, Basic, and session modes have no additional OAuth
+scope narrowing.
 
 ### Permissions and record visibility are separate gates
 
@@ -211,40 +232,40 @@ project where required. Nested data uses its own visibility API where Redmine
 provides one.
 
 Invisible and nonexistent records must remain indistinguishable. Helpers such as
-`Tool#fetch_project` and tools such as `GetIssue` return the same not-found wording
-for both cases, preventing existence probes.
+`Tools::Base#fetch_project` and tools such as `GetIssue` return the same not-found
+wording for both cases, preventing existence probes.
 
 ### Hidden tools reveal no policy details
 
-`Registry.find` searches only the caller-visible set. `Dispatcher#tools_call`
-returns the same `Unknown tool` protocol error when a name is unregistered, hidden
-by permissions, or hidden by read-only mode. Do not introduce an error branch that
-lets a caller distinguish those cases.
+Only caller-visible tools are mounted on the request-local `MCP::Server`. The SDK
+therefore returns the same `Tool not found` invalid-params error when a name is
+unregistered, hidden by permissions, or hidden by read-only mode. Do not
+introduce an error branch that lets a caller distinguish those cases.
 
 ### Internal failures are safe for clients
 
-`Dispatcher#call` separates permission failures, actionable `ToolError` results,
-and unexpected exceptions. Unexpected exceptions are logged server-side with
-diagnostic detail, but the client receives only the fixed `Internal error` message.
-Exception messages from Rails, Active Record, or the database must not cross that
-boundary.
+`Tools::Base#run` converts permission failures and actionable `ToolError` failures
+to tool results with `isError: true`. Unexpected exceptions propagate to the SDK,
+which reports them through `McpServer` to the Redmine log while returning a
+sanitized internal-error response. Exception messages from Rails, Active Record,
+or the database must not cross that boundary.
 
 ## OAuth metadata and dynamic registration
 
-[`McpMetadataController`](../app/controllers/mcp_metadata_controller.rb) serves the
+[`McpMetadataController`](app/controllers/mcp_metadata_controller.rb) serves the
 public protected-resource and authorization-server documents only when both the
 MCP endpoint and OAuth mode are enabled. It derives permission scopes and PKCE
 support from the host's Doorkeeper configuration and advertises dynamic
 registration only when that setting is enabled.
 
-[`DynamicClientRegistration`](../lib/redmine_mcp_plugin/dynamic_client_registration.rb)
+[`DynamicClientRegistration`](lib/redmine_mcp_plugin/dynamic_client_registration.rb)
 loads `doorkeeper-openid_connect` during route drawing, avoiding the gem's early
 controller binding. It exposes only the gem's registration controller and admits
 public clients whose redirect URIs are all HTTPS or loopback. Its gate requires the
 endpoint, OAuth mode, and dynamic registration setting to be enabled.
 
 The plugin migration
-[`CreateDoorkeeperOpenidConnectTables`](../db/migrate/20261007120000_create_doorkeeper_openid_connect_tables.rb)
+[`CreateDoorkeeperOpenidConnectTables`](db/migrate/20261007120000_create_doorkeeper_openid_connect_tables.rb)
 adds the host-database structures required by that integration. It runs through
 Redmine's plugin migration task and does not create a plugin-owned database.
 
@@ -252,12 +273,16 @@ Redmine's plugin migration task and does not create a plugin-owned database.
 
 Redmine adds `lib/` to the main Zeitwerk loader. Each path under
 `lib/redmine_mcp_plugin/` defines its matching constant; explicit tool exposure is
-still controlled separately by `Registry.all`. The external
-`doorkeeper-openid_connect` gem is the documented lazy-load exception.
+still controlled separately by `Registry.all`. Bundler eagerly requires the
+external `mcp` gem so `MCP::Server` and `MCP::Tool` exist before plugin eager
+loading. The other external-gem exception is `doorkeeper-openid_connect`, which is
+declared with `require: false` and loaded lazily during dynamic route setup. These
+opposite loading contracts are documented in [`PluginGemfile`](PluginGemfile).
 
-Tests run inside Redmine's test application. Unit tests cover protocol, settings,
-schema validation, limits, and dynamic-registration policy. Functional tests cover
-the HTTP gates, protocol responses, tool visibility, and record visibility.
+Tests run inside Redmine's test application. Unit tests cover SDK server setup,
+tool-base policy, settings, limits, and dynamic-registration policy. Functional
+tests cover the HTTP gates, protocol responses, tool visibility, error mapping,
+and record visibility.
 Integration tests exercise registration and the OAuth authorization flow against
 Redmine routes, models, fixtures, and database. Commands and host-checkout
-requirements are defined in the repository [coding agent guide](../AGENTS.md).
+requirements are defined in the repository [coding agent guide](AGENTS.md).
