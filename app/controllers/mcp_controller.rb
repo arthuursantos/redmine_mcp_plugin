@@ -56,7 +56,11 @@ class McpController < ApplicationController
       return head :accepted
     end
 
-    tools = RedmineMcpPlugin::Registry.all.select { |tool| tool.available_to?(User.current) }
+    return unless authorize_tool_call(message)
+
+    tools = RedmineMcpPlugin::Registry.all.select do |tool|
+      tool.available_to?(User.current, oauth_scopes: @mcp_auth[:scopes])
+    end
     server = RedmineMcpPlugin::McpServer.build(
       tools: tools,
       server_context: { user: User.current, auth: @mcp_auth }
@@ -108,7 +112,8 @@ class McpController < ApplicationController
         # can issue the required bearer token.
         response.set_header(
           'WWW-Authenticate',
-          %(Bearer realm="Redmine", resource_metadata="#{oauth_protected_resource_url}")
+          "Bearer realm=\"Redmine\", resource_metadata=\"#{oauth_protected_resource_url}\", " \
+          "scope=\"#{RedmineMcpPlugin::OAUTH_BOOTSTRAP_SCOPES.join(' ')}\""
         )
       end
       return render json: { error: result.error }, status: result.status
@@ -127,6 +132,71 @@ class McpController < ApplicationController
       "Unsupported MCP protocol version: #{header}",
       { supported: RedmineMcpPlugin::SUPPORTED_PROTOCOL_VERSIONS }
     ), status: :bad_request
+  end
+
+  def authorize_tool_call(message)
+    tool = registered_called_tool(message)
+    return true if tool.nil?
+
+    if tool.write? && RedmineMcpPlugin::Settings.read_only?
+      head :forbidden
+      return false
+    end
+
+    permissions = tool.required_permissions(called_tool_arguments(message))
+    return true if permissions.empty?
+
+    unless tool.role_allows?(
+      User.current, oauth_scopes: @mcp_auth[:scopes], permissions: permissions
+    )
+      # A broader token cannot overcome the user's role. A scope hint here
+      # would invite futile consent and retry loops, so role denial is a plain
+      # forbidden response with nothing for the client to union.
+      head :forbidden
+      return false
+    end
+
+    return true unless @mcp_auth[:mode] == :oauth2
+    return true if permissions.all? { |permission| User.current.allowed_to?(permission, nil, global: true) }
+
+    challenge_permissions = if tool.permission_scopes_can_authorize?(
+                              User.current, permissions: permissions
+                            )
+                              permissions
+                            elsif tool.write?
+                              %i[admin]
+                            else
+                              # The admin scope could make this call succeed, but
+                              # it carries write authority. A read step-up must
+                              # never introduce a write-tier scope, so there is no
+                              # safe challenge for this admin-only authorization.
+                              head :forbidden
+                              return false
+                            end
+    response.set_header(
+      'WWW-Authenticate',
+      RedmineMcpPlugin::ScopeChallenge.header(
+        permissions: challenge_permissions,
+        write: tool.write?,
+        resource_metadata: oauth_protected_resource_url
+      )
+    )
+    head :forbidden
+    false
+  end
+
+  def registered_called_tool(message)
+    return unless message['method'] == 'tools/call'
+
+    params = message['params']
+    return unless params.is_a?(Hash)
+
+    RedmineMcpPlugin::Registry.all.find { |tool| tool.tool_name == params['name'] }
+  end
+
+  def called_tool_arguments(message)
+    arguments = message.dig('params', 'arguments')
+    arguments.is_a?(Hash) ? arguments : {}
   end
 
   def oauth_protected_resource_url

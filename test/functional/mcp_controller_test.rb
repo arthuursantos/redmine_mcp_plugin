@@ -7,6 +7,10 @@ class McpControllerTest < Redmine::ControllerTest
   fixtures :projects, :users, :email_addresses, :roles, :members, :member_roles,
            :issues, :issue_statuses, :trackers, :enumerations, :enabled_modules
 
+  OAUTH_CHALLENGE =
+    'Bearer realm="Redmine", resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
+    'scope="view_issues view_project view_wiki_pages"'
+
   def setup
     Setting.rest_api_enabled = '1'
     enable_mcp('enabled' => '1')
@@ -66,7 +70,16 @@ class McpControllerTest < Redmine::ControllerTest
 
   def test_unauthenticated_request_is_rejected
     post_mcp rpc('tools/list')
+
     assert_response :unauthorized
+    assert_equal OAUTH_CHALLENGE, response.headers['WWW-Authenticate']
+  end
+
+  def test_invalid_oauth_token_challenge_includes_minimal_bootstrap_scopes
+    post_mcp rpc('tools/list'), 'Authorization' => 'Bearer invalid-token'
+
+    assert_response :unauthorized
+    assert_equal OAUTH_CHALLENGE, response.headers['WWW-Authenticate']
   end
 
   def test_invalid_api_key_is_rejected
@@ -198,12 +211,12 @@ class McpControllerTest < Redmine::ControllerTest
   def test_write_tool_call_is_refused_in_read_only_mode
     post_mcp rpc('tools/call', { 'name' => 'create_issue',
                                  'arguments' => { 'project' => 'ecookbook', 'subject' => 'x' } }),
-             api_key_headers(User.find(1))
-    assert_equal(-32_602, json_body.dig('error', 'code'))
-    assert_equal 'Tool not found: create_issue', json_body.dig('error', 'data')
+             oauth_headers(User.find(2), scopes: 'view_issues')
+    assert_response :forbidden
+    assert_nil response.headers['WWW-Authenticate']
   end
 
-  def test_unknown_tool_uses_the_same_not_found_error_as_a_hidden_tool
+  def test_unknown_tool_remains_an_sdk_not_found_error
     post_mcp rpc('tools/call', { 'name' => 'not_registered', 'arguments' => {} }),
              api_key_headers(User.find(1))
 
@@ -226,7 +239,7 @@ class McpControllerTest < Redmine::ControllerTest
     assert_nil payload['oauth_scopes']
   end
 
-  def test_oauth_scope_narrows_the_users_redmine_permissions
+  def test_oauth_scope_does_not_hide_tools_permitted_by_the_users_role
     user = User.find(2)
 
     post_mcp rpc('tools/list'), api_key_headers(user)
@@ -237,13 +250,120 @@ class McpControllerTest < Redmine::ControllerTest
     oauth = oauth_headers(user, scopes: 'view_issues')
     post_mcp rpc('tools/list'), oauth
     oauth_tools = json_body['result']['tools'].pluck('name')
-    assert_not_includes oauth_tools, 'list_projects'
+    assert_includes oauth_tools, 'whoami'
+    assert_includes oauth_tools, 'list_users'
+    assert_includes oauth_tools, 'list_enumerations'
+    assert_includes oauth_tools, 'list_projects'
     assert_includes oauth_tools, 'search_issues'
 
-    post_mcp rpc('tools/call', { 'name' => 'whoami' }), oauth
-    identity = json_body.dig('result', 'structuredContent')
-    assert_equal 'oauth2', identity['authentication_mode']
-    assert_equal ['view_issues'], identity['oauth_scopes']
+    post_mcp rpc('tools/call', { 'name' => 'search_issues' }), oauth
+    assert_not json_body.dig('result', 'isError')
+  end
+
+  def test_read_scope_challenge_never_includes_write_scopes
+    oauth = oauth_headers(User.find(2), scopes: 'view_issues')
+
+    post_mcp rpc('tools/call', { 'name' => 'list_projects' }), oauth
+
+    assert_response :forbidden
+    assert_equal(
+      'Bearer error="insufficient_scope", scope="view_project", ' \
+      'resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
+      'error_description="The access token lacks the scope required for this operation"',
+      response.headers['WWW-Authenticate']
+    )
+  end
+
+  def test_issue_creation_challenge_includes_all_same_tier_correlated_scopes
+    enable_mcp('read_only' => '0')
+    oauth = oauth_headers(User.find(2), scopes: 'view_issues')
+
+    post_mcp rpc('tools/call', { 'name' => 'create_issue',
+                                 'arguments' => { 'project' => 'ecookbook', 'subject' => 'x' } }), oauth
+
+    assert_response :forbidden
+    assert_equal(
+      'Bearer error="insufficient_scope", scope="add_issues add_issue_notes", ' \
+      'resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
+      'error_description="The access token lacks the scope required for this operation"',
+      response.headers['WWW-Authenticate']
+    )
+  end
+
+  def test_private_issue_note_challenge_includes_every_required_scope
+    enable_mcp('read_only' => '0')
+    oauth = oauth_headers(User.find(2), scopes: 'add_issue_notes')
+
+    post_mcp rpc('tools/call', { 'name' => 'add_issue_note',
+                                 'arguments' => { 'id' => 1, 'notes' => 'Private', 'private' => true } }), oauth
+
+    assert_response :forbidden
+    assert_equal(
+      'Bearer error="insufficient_scope", scope="add_issue_notes set_notes_private", ' \
+      'resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
+      'error_description="The access token lacks the scope required for this operation"',
+      response.headers['WWW-Authenticate']
+    )
+  end
+
+  def test_oauth_administrator_without_a_grantable_role_is_challenged_for_admin
+    enable_mcp('read_only' => '0')
+    administrator = User.find(4)
+    administrator.update_columns(admin: true)
+    assert_not administrator.roles.any? { |role| role.allowed_to?(:set_notes_private) }
+    assert_not administrator.builtin_role.allowed_to?(:set_notes_private)
+
+    post_mcp rpc('tools/call', { 'name' => 'add_issue_note',
+                                 'arguments' => { 'id' => 1, 'notes' => 'Private', 'private' => true } }),
+             oauth_headers(administrator, scopes: 'view_issues')
+
+    assert_response :forbidden
+    assert_equal(
+      'Bearer error="insufficient_scope", scope="admin", ' \
+      'resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
+      'error_description="The access token lacks the scope required for this operation"',
+      response.headers['WWW-Authenticate']
+    )
+
+    post_mcp rpc('tools/call', { 'name' => 'add_issue_note',
+                                 'arguments' => { 'id' => 1, 'notes' => 'Authorized', 'private' => true } }),
+             oauth_headers(administrator, scopes: 'admin')
+    assert_response :success
+    assert_not json_body.dig('result', 'isError')
+  end
+
+  def test_admin_only_read_authorization_does_not_challenge_for_write_tier_admin
+    Role.non_member.remove_permission!(:view_wiki_pages)
+    administrator = User.find(4)
+    administrator.update_columns(admin: true)
+    assert_not administrator.roles.any? { |role| role.allowed_to?(:view_wiki_pages) }
+
+    post_mcp rpc('tools/call', { 'name' => 'list_wiki_pages' }),
+             oauth_headers(administrator, scopes: 'view_issues')
+
+    assert_response :forbidden
+    assert_nil response.headers['WWW-Authenticate']
+  end
+
+  def test_oauth_scope_does_not_expose_tools_denied_by_the_users_role
+    Role.non_member.remove_permission!(:view_wiki_pages)
+    oauth = oauth_headers(User.find(7), scopes: 'view_wiki_pages')
+
+    post_mcp rpc('tools/list'), oauth
+    assert_not_includes json_body['result']['tools'].pluck('name'), 'list_wiki_pages'
+
+    post_mcp rpc('tools/call', { 'name' => 'list_wiki_pages' }), oauth
+    assert_response :forbidden
+    assert_nil response.headers['WWW-Authenticate']
+  end
+
+  def test_permissionless_tools_need_no_oauth_scope
+    post_mcp rpc('tools/list'), oauth_headers(User.find(2), scopes: '')
+
+    names = json_body['result']['tools'].pluck('name')
+    assert_includes names, 'whoami'
+    assert_includes names, 'list_users'
+    assert_includes names, 'list_enumerations'
   end
 
   def test_sdk_schema_failure_is_an_error_tool_result
@@ -281,6 +401,7 @@ class McpControllerTest < Redmine::ControllerTest
     issue.update_columns(is_private: true)
     post_mcp rpc('tools/call', { 'name' => 'get_issue', 'arguments' => { 'id' => issue.id } }),
              api_key_headers(User.find(7))
+    assert_response :success
     assert json_body['result']['isError']
     assert_match(/No visible issue/, json_body['result']['content'].first['text'])
   end

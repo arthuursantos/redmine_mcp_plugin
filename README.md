@@ -106,6 +106,10 @@ plugin publishes protected-resource and authorization-server metadata at:
 /.well-known/oauth-authorization-server
 ```
 
+The protected-resource metadata and the `/mcp` authentication challenge advertise
+`view_issues view_project view_wiki_pages` as the minimal bootstrap scopes for
+an initial client handshake.
+
 Dynamic client registration (RFC 7591) is optional and disabled by default.
 Enabling it exposes `POST /oauth/registration` so public MCP clients can register
 before completing Authorization Code with PKCE.
@@ -120,6 +124,11 @@ flow, Origin policy, authorization layers, and other security invariants.
 The available tool list varies with the authenticated user's access. Read-only
 mode is on by default; while it is on, write tools are absent from `tools/list` and
 are refused by `tools/call`.
+
+For OAuth2 callers, `tools/list` reflects Redmine role permissions rather than
+the current token's narrower scopes. A role-permitted tool can therefore be
+discovered before scope elevation, but `tools/call` still enforces the current
+token scopes; tools denied by the user's role remain hidden.
 
 | Capability | Tools | Required Redmine permission |
 |---|---|---|
