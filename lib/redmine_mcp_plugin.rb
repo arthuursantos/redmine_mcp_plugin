@@ -8,4 +8,7 @@ module RedmineMcpPlugin
   # Transport revisions accepted by the controller, newest first. Older
   # revisions remain for compatibility with shipped clients.
   SUPPORTED_PROTOCOL_VERSIONS = %w[2026-07-28 2025-11-25 2025-06-18].freeze
+
+  # Low-risk scopes clients should request for their initial MCP handshake.
+  OAUTH_BOOTSTRAP_SCOPES = %w[view_issues view_project view_wiki_pages].freeze
 end

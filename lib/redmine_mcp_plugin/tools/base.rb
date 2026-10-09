@@ -9,23 +9,24 @@ module RedmineMcpPlugin
     #
     # Permissioned record operations combine two authorization layers:
     #
-    #   1. `permission` is checked through User#allowed_to?, which intersects the
-    #      user's role permissions with the OAuth token's scopes.
+    #   1. `permission` is checked through User#allowed_to?. Discovery checks the
+    #      user's role alone, while execution also applies the OAuth token's
+    #      narrower scopes.
     #   2. Record access additionally reads through core's .visible scopes.
     #
     # Redmine visibility scopes honor roles but not OAuth scopes, while
     # User#allowed_to? alone does not filter invisible records.
     #
-    # Authorization is enforced with two locks, mirroring the hand-written core
-    # this replaces:
+    # Authorization is enforced with three locks:
     #
     #   * Discovery lock: `available_to?` decides whether the tool is mounted on
-    #     the per-request server at all, so a tool the caller cannot use never
-    #     appears in tools/list and is indistinguishable from one that does not
-    #     exist.
-    #   * Execution lock: `run` re-checks read-only and permission before the
-    #     tool body, defending against a filter bug or race that mounted a tool
-    #     the caller should not reach.
+    #     the per-request server at all. It ignores OAuth scope narrowing so a
+    #     role-permitted tool remains discoverable for step-up, while a tool the
+    #     user's role denies stays out of discovery.
+    #   * HTTP lock: McpController authorizes registered tools/call requests and
+    #     owns role/read-only 403s and OAuth scope challenges.
+    #   * Execution backstop: `run` re-checks read-only and permission before the
+    #     tool body, defending against a controller bug or policy race.
     class Base < MCP::Tool
       # Private sentinel so the class-level accessors below can tell "read the
       # value" from "set it to nil" (a valid permission value). Not reusing
@@ -67,17 +68,46 @@ module RedmineMcpPlugin
         def write?         = !!@mcp_write
         def destructive?   = !!@mcp_destructive
 
+        # Permissions required by this invocation. Tools with argument-dependent
+        # authority override this so the HTTP gate can challenge for the whole
+        # operation before execution begins.
+        def required_permissions(_arguments = {})
+          [mcp_permission].compact
+        end
+
         # Whether this tool should appear in tools/list for the current user and
         # be mounted on the request's server (the discovery lock). tools/list is
         # allowed to vary by the authorization presented on the request -- the
         # 2026-07-28 spec says so explicitly -- and hiding a tool the caller
         # could never successfully call is friendlier than letting a model
         # discover it and fail.
-        def available_to?(user)
+        def available_to?(user, oauth_scopes:)
           return false if write? && Settings.read_only?
-          return true  if mcp_permission.nil?
 
-          user.allowed_to?(mcp_permission, nil, global: true)
+          role_allows?(user, oauth_scopes: oauth_scopes)
+        end
+
+        # Checks the declared permission without OAuth scope narrowing, then
+        # restores the exact scopes retained by the authentication context.
+        def role_allows?(user, oauth_scopes:, permissions: required_permissions)
+          return true if permissions.empty?
+
+          user.oauth_scope = nil
+          begin
+            permissions.all? { |permission| user.allowed_to?(permission, nil, global: true) }
+          ensure
+            user.oauth_scope = oauth_scopes
+          end
+        end
+
+        # Whether assigned and built-in roles can grant every permission without
+        # relying on administrator authority. An OAuth administrator needs the
+        # admin scope when this route cannot make the operation actionable.
+        def permission_scopes_can_authorize?(user, permissions: required_permissions)
+          roles = user.roles.to_a | [user.builtin_role]
+          permissions.all? do |permission|
+            roles.any? { |role| role.allowed_to?(permission) }
+          end
         end
 
         # The SDK's entry point is a class method receiving validated arguments
@@ -132,13 +162,16 @@ module RedmineMcpPlugin
 
       # Runs one tool call and returns an `MCP::Tool::Response`. The SDK has
       # already validated arguments against the schema by this point, so this
-      # only enforces the execution lock and runs the body.
+      # repeats the execution policy as a backstop and runs the body.
       def run(arguments)
         klass = self.class
+        arguments = arguments.to_h.deep_stringify_keys
         return refusal if klass.write? && Settings.read_only?
-        return refusal if klass.mcp_permission && !user.allowed_to?(klass.mcp_permission, nil, global: true)
+        return refusal unless klass.required_permissions(arguments).all? do |permission|
+          user.allowed_to?(permission, nil, global: true)
+        end
 
-        success(perform(arguments.to_h.deep_stringify_keys))
+        success(perform(arguments))
       rescue ToolError, PermissionError => e
         # Actionable, caller-scoped refusals stay inside a successful JSON-RPC
         # result as an error tool response; only unexpected exceptions propagate

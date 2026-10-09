@@ -14,11 +14,18 @@ class RedmineMcpPluginToolsBaseTest < ActiveSupport::TestCase
   # A user test double: the locks only ask User#allowed_to?, so the probe tests
   # stay off the fixture set and assert the gate in isolation.
   class FakeUser
-    def initialize(allowed:)
+    def initialize(allowed:, allowed_permissions: nil)
       @allowed = allowed
+      @allowed_permissions = allowed_permissions
     end
 
-    def allowed_to?(*, **) = @allowed
+    attr_writer :oauth_scope
+
+    def allowed_to?(permission, *, **)
+      return @allowed if @allowed_permissions.nil?
+
+      @allowed_permissions.include?(permission)
+    end
   end
 
   class ReadProbe < RedmineMcpPlugin::Tools::Base
@@ -47,6 +54,20 @@ class RedmineMcpPluginToolsBaseTest < ActiveSupport::TestCase
     description 'test'
     permission :view_issues
     input_schema({ 'type' => 'object', 'additionalProperties' => false })
+
+    def perform(_arguments) = { ok: true }
+  end
+
+  class ConditionalPermProbe < RedmineMcpPlugin::Tools::Base
+    tool_name 'conditional_perm_probe'
+    title 'Conditional permission probe'
+    description 'test'
+    permission :view_issues
+    input_schema({ 'type' => 'object', 'additionalProperties' => true })
+
+    def self.required_permissions(arguments = {})
+      arguments['elevated'] ? super + %i[edit_issues] : super
+    end
 
     def perform(_arguments) = { ok: true }
   end
@@ -96,21 +117,21 @@ class RedmineMcpPluginToolsBaseTest < ActiveSupport::TestCase
   # --- Discovery lock: available_to? ---------------------------------------
 
   def test_permissionless_read_tool_is_available_to_anyone
-    assert ReadProbe.available_to?(FakeUser.new(allowed: false))
+    assert ReadProbe.available_to?(FakeUser.new(allowed: false), oauth_scopes: nil)
   end
 
   def test_permissioned_tool_follows_allowed_to
-    assert PermProbe.available_to?(FakeUser.new(allowed: true))
-    assert_not PermProbe.available_to?(FakeUser.new(allowed: false))
+    assert PermProbe.available_to?(FakeUser.new(allowed: true), oauth_scopes: nil)
+    assert_not PermProbe.available_to?(FakeUser.new(allowed: false), oauth_scopes: nil)
   end
 
   def test_write_tool_is_hidden_in_read_only_mode
-    assert_not WriteProbe.available_to?(FakeUser.new(allowed: true))
+    assert_not WriteProbe.available_to?(FakeUser.new(allowed: true), oauth_scopes: nil)
   end
 
   def test_write_tool_appears_when_read_only_is_off
     with_read_only_off do
-      assert WriteProbe.available_to?(FakeUser.new(allowed: true))
+      assert WriteProbe.available_to?(FakeUser.new(allowed: true), oauth_scopes: nil)
     end
   end
 
@@ -125,6 +146,15 @@ class RedmineMcpPluginToolsBaseTest < ActiveSupport::TestCase
 
   def test_permission_denied_execution_is_refused
     result = PermProbe.call(server_context: { user: FakeUser.new(allowed: false) }).to_h
+
+    assert result[:isError]
+    assert_equal RedmineMcpPlugin::Tools::Base::UNAVAILABLE, result[:content].first[:text]
+  end
+
+  def test_argument_dependent_permission_is_rechecked_by_the_execution_backstop
+    user = FakeUser.new(allowed: true, allowed_permissions: %i[view_issues])
+
+    result = ConditionalPermProbe.call(server_context: { user: user }, elevated: true).to_h
 
     assert result[:isError]
     assert_equal RedmineMcpPlugin::Tools::Base::UNAVAILABLE, result[:content].first[:text]

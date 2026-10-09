@@ -19,7 +19,7 @@ class McpMetadataController < ApplicationController
     render json: {
       resource: mcp_resource_url,
       authorization_servers: [root_url_without_trailing_slash],
-      scopes_supported: supported_scopes,
+      scopes_supported: bootstrap_scopes,
       bearer_methods_supported: %w[header],
       resource_name: 'Redmine MCP Server',
       resource_documentation: 'https://github.com/joaoperfig/redmine_mcp_plugin'
@@ -62,20 +62,18 @@ class McpMetadataController < ApplicationController
     "#{root_url_without_trailing_slash}/mcp"
   end
 
-  # Redmine registers every permission name as an OAuth2 scope, plus 'admin',
-  # which is what lets a token be strictly weaker than the user who issued it.
-  # Doorkeeper's own configuration is the authoritative list; AccessControl is
-  # the fallback if that ever moves.
   def supported_scopes
-    return [] unless defined?(Doorkeeper)
+    return bootstrap_scopes unless defined?(Doorkeeper)
 
     scopes = doorkeeper_config.scopes.to_a.map(&:to_s)
-    return scopes if scopes.any?
-
-    Redmine::AccessControl.permissions.map { |permission| permission.name.to_s } + %w[admin]
+    scopes.any? ? scopes : bootstrap_scopes
   rescue StandardError => e
     Rails.logger.warn("[redmine_mcp_plugin] could not enumerate OAuth2 scopes: #{e.class}: #{e.message}")
-    []
+    bootstrap_scopes
+  end
+
+  def bootstrap_scopes
+    RedmineMcpPlugin::OAUTH_BOOTSTRAP_SCOPES
   end
 
   # Doorkeeper 5.x installations expose either .config or .configuration.

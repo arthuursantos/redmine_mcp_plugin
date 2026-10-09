@@ -123,7 +123,7 @@ class RedmineMcpPluginToolsSdkConversionTest < ActiveSupport::TestCase
 
   def build_server(user)
     RedmineMcpPlugin::McpServer.build(
-      tools: RedmineMcpPlugin::Registry.all.select { |tool| tool.available_to?(user) },
+      tools: RedmineMcpPlugin::Registry.all.select { |tool| tool.available_to?(user, oauth_scopes: nil) },
       server_context: { user: user, auth: { mode: :api_key } }
     )
   end

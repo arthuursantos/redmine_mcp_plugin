@@ -12,7 +12,7 @@ Repository-wide conventions and host-backed commands remain in
 | Concern | Authoritative seam | Boundary test |
 |---|---|---|
 | Mounted HTTP verbs and endpoint paths | [`config/routes.rb`](../config/routes.rb) | Functional or integration route request |
-| HTTP status, controller gates, Origin, body parsing, and pre-SDK JSON-RPC errors | [`McpController`](../app/controllers/mcp_controller.rb) plus [`JsonRpc`](../lib/redmine_mcp_plugin/json_rpc.rb) | `test/functional/mcp_controller_test.rb` |
+| HTTP status, controller gates, Origin, body parsing, tool-call authorization, and pre-SDK JSON-RPC errors | [`McpController`](../app/controllers/mcp_controller.rb), [`ScopeChallenge`](../lib/redmine_mcp_plugin/scope_challenge.rb), and [`JsonRpc`](../lib/redmine_mcp_plugin/json_rpc.rb) | `test/functional/mcp_controller_test.rb` |
 | Credential selection and Redmine user resolution | [`Authenticator`](../lib/redmine_mcp_plugin/authenticator.rb) | Controller test at the authentication boundary |
 | Supported revisions and response metadata | SDK `MCP::Server`, configured by [`McpServer`](../lib/redmine_mcp_plugin/mcp_server.rb), plus controller transport-version validation | `test/unit/mcp_server_test.rb` plus controller coverage when HTTP behavior changes |
 | MCP methods, SDK dispatch, and post-parse JSON-RPC error mapping | SDK `MCP::Server`, configured by [`McpServer`](../lib/redmine_mcp_plugin/mcp_server.rb) | Controller request exercising the public response |
@@ -30,6 +30,9 @@ changed. Keep `McpServer` and SDK-backed tools independent of HTTP. Add a tool b
 defining its metadata and implementation in a Zeitwerk-matching
 `Tools::Base < MCP::Tool` subclass, then adding that class explicitly to
 `Registry.all`; a file under `tools/` alone is not exposed.
+
+Keep scope-correlation policy and insufficient-scope header composition in
+[`ScopeChallenge`](../lib/redmine_mcp_plugin/scope_challenge.rb).
 
 Let the SDK own MCP method dispatch, negotiation, schema handling, and JSON-RPC
 errors after the controller has parsed and admitted a request. Keep plugin
