@@ -15,9 +15,14 @@ module RedmineMcpPlugin
           Tools::ListWikiPages,
           Tools::GetWikiPage,
           Tools::ListEnumerations,
+          Tools::ListStatuses,
+          Tools::ListVersions,
           Tools::ListUsers,
+          Tools::GetGroup,
           Tools::CreateIssue,
-          Tools::AddIssueNote
+          Tools::AddIssueNote,
+          Tools::CreateVersion,
+          Tools::CreateWikiPage
         ]
       end
     end

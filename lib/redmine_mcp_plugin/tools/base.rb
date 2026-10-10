@@ -187,9 +187,16 @@ module RedmineMcpPlugin
 
       def success(payload)
         MCP::Tool::Response.new(
-          [{ type: 'text', text: JSON.pretty_generate(payload) }],
+          [{ type: 'text', text: JSON.pretty_generate(payload) }, *content_blocks(payload)],
           structured_content: payload
         )
+      end
+
+      # Extra MCP content blocks a tool emits alongside the JSON text block, such
+      # as the resource_link blocks that point at an issue's attachment bytes.
+      # None by default, so an ordinary tool response is unchanged.
+      def content_blocks(_payload)
+        []
       end
 
       def failure(text)
@@ -265,6 +272,16 @@ module RedmineMcpPlugin
 
       def iso(time)
         time&.iso8601
+      end
+
+      # Typed identity reference {id, name, type} used wherever a person or
+      # group is surfaced. The type keeps a Group assignee from being mistaken
+      # for a user, and the id keeps same-name principals distinguishable. nil
+      # in, nil out, so an optional association can be passed straight through.
+      def identity(principal)
+        return nil if principal.nil?
+
+        { id: principal.id, name: principal.name, type: principal.is_a?(Group) ? 'Group' : 'User' }
       end
     end
   end

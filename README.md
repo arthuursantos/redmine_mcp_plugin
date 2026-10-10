@@ -107,8 +107,10 @@ plugin publishes protected-resource and authorization-server metadata at:
 ```
 
 The protected-resource metadata and the `/mcp` authentication challenge advertise
-`view_issues view_project view_wiki_pages` as the minimal bootstrap scopes for
-an initial client handshake.
+`view_issues view_project view_wiki_pages view_issue_watchers view_time_entries`
+as the minimal read bootstrap scopes for an initial client handshake. Write scopes
+and `view_private_notes` are requested through step-up challenges as operations
+need them.
 
 Dynamic client registration (RFC 7591) is optional and disabled by default.
 Enabling it exposes `POST /oauth/registration` so public MCP clients can register
@@ -145,6 +147,49 @@ Tool arguments are validated against their declared schemas. The paginated
 tools (`list_projects`, `search_issues`, `list_wiki_pages`, and `list_users`)
 support `limit` and `offset`, report pagination metadata, and cap each page at
 the configured maximum (100 by default, with an absolute maximum of 1000).
+
+## Prompts
+
+The server also exposes user-invoked prompts through `prompts/list` and
+`prompts/get`. A prompt renders instruction text the model then carries out with
+the read tools above; the prompt itself reads no Redmine records, so prompts are
+offered to every authenticated user and cannot widen what the caller may see.
+
+| Prompt | Purpose |
+|---|---|
+| `generate_changelog` | Produce an Athena-style changelog for the visible issues of one project version filtered by a single tracker. Takes a single optional `request` argument: free text describing the desired changelog (which version, optional tracker, optional format notes). It may be omitted; the skill then asks what you want and resolves scope interactively through the read tools, defaulting to the house Athena format. |
+| `qa_ticket_history_report` | Produce a scoped QA ticket-history report with São Paulo business-hour ownership, retest counting, and Dev/QA identification. Takes one optional `request`: free text naming a project/category/version and/or period, plus any format or calendar overrides. It may be omitted; the skill asks only for missing or ambiguous scope, proposes returned/reproved statuses from the real catalog for confirmation, and then uses the read tools. Weekends are excluded, holidays are not accounted for, and an open issue's ongoing owner interval is excluded from totals. |
+
+Both prompts take a single free-text argument. The server offers no prompt-argument
+completion capability. Request text is represented losslessly as inert data and is
+never dereferenced, so a long body, path, URL, or delimiter-like text in your notes
+is accepted rather than refused. The skills are read-only, and every read tool they
+name independently enforces the caller's permissions and record visibility.
+
+## Resources (issue attachments)
+
+The server declares the `resources` capability for one thing: the bytes of a file
+attached to a visible issue. It is application- or user-selected context, not a
+model-driven tool. `resources/list` is empty and `resources/templates/list`
+publishes a single template:
+
+```
+redmine://issues/{issue_id}/attachments/{attachment_id}
+```
+
+Call `get_issue` with `include_attachments: true` to discover concrete
+attachments: each is returned as metadata (including its `resource_uri` and a
+credential-free `human_download_url`) and as a `resource_link` content block a
+resource-aware client can select. Fetch the bytes with `resources/read` on the
+`resource_uri`. The read runs as the authenticated user and rechecks issue and
+attachment visibility every time, so a URI is not a capability.
+
+Safe UTF-8 text is returned as `text`; every other type, including HTML and SVG,
+is returned as a base64 `blob`. One read is capped at 5 MiB; a larger but visible
+attachment is refused with a pointer to its `human_download_url`, which a user
+already signed in to Redmine can open in a browser. The capability offers no
+subscriptions or change notifications. OAuth callers need the `view_issues` scope
+and are challenged to elevate to it when a narrower token is presented.
 
 ## Protocol behavior
 

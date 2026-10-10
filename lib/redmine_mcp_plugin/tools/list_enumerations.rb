@@ -4,8 +4,9 @@ module RedmineMcpPlugin
   module Tools
     class ListEnumerations < Base
       tool_name 'list_enumerations'
-      title 'List trackers, statuses and priorities'
-      description 'List the trackers, issue statuses and priorities configured on this Redmine.'
+      title 'List trackers and priorities'
+      description 'List the trackers and issue priorities configured on this Redmine. ' \
+                  'Issue statuses have their own tool, list_statuses.'
       input_schema('type' => 'object', 'additionalProperties' => false)
 
       private
@@ -13,7 +14,6 @@ module RedmineMcpPlugin
       def perform(_arguments)
         {
           trackers: Tracker.sorted.map { |t| { id: t.id, name: t.name } },
-          issue_statuses: IssueStatus.sorted.map { |s| { id: s.id, name: s.name, is_closed: s.is_closed? } },
           priorities: IssuePriority.active.map { |p| { id: p.id, name: p.name, is_default: p.is_default? } }
         }
       end

@@ -18,8 +18,18 @@ module RedmineMcpPlugin
                         'description' => 'Issue status filter. Defaults to open.' },
           'tracker' => { 'type' => 'string', 'description' => 'Tracker name, e.g. Bug.' },
           'assigned_to_me' => { 'type' => 'boolean', 'description' => 'Only issues assigned to the authenticated user.' },
+          'fixed_version_id' => { 'type' => 'integer', 'description' => 'Only issues targeting this version id.' },
+          'author_id' => { 'type' => 'integer', 'description' => 'Only issues created by this user id.' },
+          'category_id' => { 'type' => 'integer', 'description' => 'Only issues in this category id.' },
           'updated_since' => { 'type' => 'string', 'format' => 'date',
                                'description' => 'Only issues updated on or after this ISO-8601 date.' },
+          'created_from' => { 'type' => 'string', 'format' => 'date',
+                              'description' => 'Only issues created on or after this ISO-8601 date.' },
+          'created_to' => { 'type' => 'string', 'format' => 'date',
+                            'description' => 'Only issues created on or before this ISO-8601 date.' },
+          'sort' => { 'type' => 'string',
+                      'enum' => %w[updated_on updated_on:desc created_on created_on:desc id id:desc],
+                      'description' => 'Result order. Defaults to updated_on:desc.' },
           'offset' => { 'type' => 'integer', 'minimum' => 0,
                         'description' => 'Rows to skip, for paging past the server cap. Defaults to 0.' },
           'limit' => { 'type' => 'integer', 'minimum' => 1, 'description' => 'Maximum issues to return.' }
@@ -30,7 +40,8 @@ module RedmineMcpPlugin
       private
 
       def perform(arguments)
-        scope = Issue.visible(user).includes(:project, :tracker, :status, :priority, :author, :assigned_to)
+        scope = Issue.visible(user)
+                     .includes(:project, :tracker, :status, :priority, :author, :assigned_to, :category, :fixed_version)
 
         if (identifier = arguments['project'].presence)
           project = fetch_project(identifier)
@@ -59,20 +70,42 @@ module RedmineMcpPlugin
         end
 
         scope = scope.where(assigned_to_id: user.id) if arguments['assigned_to_me']
+        scope = scope.where(fixed_version_id: arguments['fixed_version_id'].to_i) if arguments['fixed_version_id'].present?
+        scope = scope.where(author_id: arguments['author_id'].to_i) if arguments['author_id'].present?
+        scope = scope.where(category_id: arguments['category_id'].to_i) if arguments['category_id'].present?
 
         if (since = arguments['updated_since'].presence)
-          begin
-            scope = scope.where('issues.updated_on >= ?', Date.iso8601(since.to_s).beginning_of_day)
-          rescue ArgumentError
-            raise ToolError, "updated_since must be an ISO-8601 date, got #{since.inspect}"
-          end
+          scope = scope.where('issues.updated_on >= ?', parse_date(since, 'updated_since').beginning_of_day)
+        end
+        if (from = arguments['created_from'].presence)
+          scope = scope.where('issues.created_on >= ?', parse_date(from, 'created_from').beginning_of_day)
+        end
+        if (to = arguments['created_to'].presence)
+          scope = scope.where('issues.created_on <= ?', parse_date(to, 'created_to').end_of_day)
         end
 
         limit  = limit_for(arguments)
         offset = offset_for(arguments)
-        rows   = scope.reorder(updated_on: :desc).offset(offset).limit(limit)
+        rows   = scope.reorder(order_for(arguments['sort'])).offset(offset).limit(limit)
                       .map { |issue| summarise(issue) }
         paged(total: scope.count, offset: offset, key: :issues, rows: rows)
+      end
+
+      def parse_date(value, field)
+        Date.iso8601(value.to_s)
+      rescue ArgumentError
+        raise ToolError, "#{field} must be an ISO-8601 date, got #{value.inspect}"
+      end
+
+      def order_for(sort)
+        case sort.presence&.to_s
+        when 'updated_on'      then { updated_on: :asc }
+        when 'created_on'      then { created_on: :asc }
+        when 'created_on:desc' then { created_on: :desc }
+        when 'id'              then { id: :asc }
+        when 'id:desc'         then { id: :desc }
+        else { updated_on: :desc }
+        end
       end
 
       def summarise(issue)
@@ -86,6 +119,8 @@ module RedmineMcpPlugin
           priority: issue.priority&.name,
           author: issue.author&.name,
           assigned_to: issue.assigned_to&.name,
+          category: issue.category&.name,
+          fixed_version: issue.fixed_version&.name,
           done_ratio: issue.done_ratio,
           created_on: iso(issue.created_on),
           updated_on: iso(issue.updated_on)

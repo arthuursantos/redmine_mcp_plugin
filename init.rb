@@ -24,7 +24,7 @@ Redmine::Plugin.register :redmine_mcp_plugin do
               'using Redmine\'s own authentication and permission system.'
   version     RedmineMcpPlugin::VERSION
   url         'https://github.com/joaoperfig/redmine_mcp_plugin'
-  author_url  'https://github.com/joaoperfig'
+  author_url  'https://github.com/joaoperfig/redmine_mcp_plugin/graphs/contributors'
 
   # Redmine 6.1 is the minimum release with the required OAuth2 support.
   requires_redmine version_or_higher: '6.1.0'

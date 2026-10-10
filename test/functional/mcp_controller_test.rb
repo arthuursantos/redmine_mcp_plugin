@@ -7,9 +7,12 @@ class McpControllerTest < Redmine::ControllerTest
   fixtures :projects, :users, :email_addresses, :roles, :members, :member_roles,
            :issues, :issue_statuses, :trackers, :enumerations, :enabled_modules
 
+  # The bootstrap challenge advertises OAUTH_BOOTSTRAP_SCOPES: the three core read
+  # scopes plus the two read satellites (watchers, time entries) that ticket 07
+  # folds into bootstrap. No write scope and no view_private_notes.
   OAUTH_CHALLENGE =
     'Bearer realm="Redmine", resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
-    'scope="view_issues view_project view_wiki_pages"'
+    'scope="view_issues view_project view_wiki_pages view_issue_watchers view_time_entries"'
 
   def setup
     Setting.rest_api_enabled = '1'
@@ -266,8 +269,10 @@ class McpControllerTest < Redmine::ControllerTest
     post_mcp rpc('tools/call', { 'name' => 'list_projects' }), oauth
 
     assert_response :forbidden
+    # view_project correlates one hop to its same-tier reads; the challenge stays
+    # entirely within the read tier and never introduces a write scope.
     assert_equal(
-      'Bearer error="insufficient_scope", scope="view_project", ' \
+      'Bearer error="insufficient_scope", scope="view_project view_issues view_wiki_pages", ' \
       'resource_metadata="http://test.host/.well-known/oauth-protected-resource/mcp", ' \
       'error_description="The access token lacks the scope required for this operation"',
       response.headers['WWW-Authenticate']

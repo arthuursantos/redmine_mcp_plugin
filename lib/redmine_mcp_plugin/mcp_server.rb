@@ -26,6 +26,22 @@ module RedmineMcpPlugin
       )
     end
 
+    # Capabilities this server advertises. The `logging` entry is carried over
+    # unchanged from the SDK's default set so this is not a silent capability
+    # regression. `resources` is declared as a flat
+    # object: issue attachments are served through `resources/read` and the single
+    # published template, but the capability promises neither `listChanged` nor
+    # `subscribe`, because attachment discovery is owned by `get_issue` and nothing
+    # here emits change notifications. `prompts` is a flat server capability --
+    # individual prompts are not gated per user, since a prompt only renders
+    # instructions and the read tools it names stay independently authorized.
+    CAPABILITIES = {
+      tools: { listChanged: true },
+      prompts: { listChanged: true },
+      resources: {},
+      logging: {}
+    }.freeze
+
     module_function
 
     # Installs the exception reporter on the SDK's global configuration,
@@ -35,19 +51,37 @@ module RedmineMcpPlugin
       MCP.configuration.exception_reporter = EXCEPTION_REPORTER
     end
 
-    # Builds a stateless MCP server. `tools` and `server_context` default empty
-    # so an initialize/ping handshake answers before any tool is wired in.
-    def build(tools: [], server_context: nil)
+    # Builds a stateless MCP server. `tools`, `prompts`, `resource_templates`, and
+    # `server_context` default empty so an initialize/ping handshake answers before
+    # any tool, prompt, or resource is wired in.
+    def build(tools: [], prompts: [], resource_templates: [], server_context: nil)
       configure!
 
-      MCP::Server.new(
+      server = MCP::Server.new(
         name: 'redmine-mcp-plugin',
         title: 'Redmine',
         version: RedmineMcpPlugin::VERSION,
         instructions: INSTRUCTIONS,
         tools: tools,
+        prompts: prompts,
+        resource_templates: resource_templates,
+        capabilities: CAPABILITIES,
         server_context: server_context
       )
+      install_resource_handler(server)
+      server
+    end
+
+    # Routes `resources/read` to the attachment reader. The read runs after the
+    # controller has authenticated the request and set User.current, so the issue
+    # and attachment visibility scopes narrow to the same caller -- OAuth scopes
+    # included -- and a URI never discloses an attachment the caller cannot see.
+    # The controller offers any OAuth step-up before dispatch; this handler still
+    # re-checks authorization, so it is the final gate, not the only one.
+    def install_resource_handler(server)
+      server.resources_read_handler do |params|
+        RedmineMcpPlugin::Resources.read(params, user: User.current)
+      end
     end
   end
 end

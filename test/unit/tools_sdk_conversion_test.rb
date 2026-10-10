@@ -31,10 +31,12 @@ class RedmineMcpPluginToolsSdkConversionTest < ActiveSupport::TestCase
     end
   end
 
-  # Expected to be eleven; a tool silently dropped from the registry would be a
-  # security-relevant regression, so the count is pinned.
-  def test_registry_exposes_all_eleven_tools
-    assert_equal 11, ALL_TOOLS.size
+  # Expected to be sixteen (12 read + 4 write); a tool silently dropped from or
+  # added to the registry would be a security-relevant regression, so the count
+  # is pinned.
+  def test_registry_exposes_all_sixteen_tools
+    assert_equal 16, ALL_TOOLS.size
+    assert_equal 4, ALL_TOOLS.count(&:write?)
   end
 
   # Each tool's descriptor comes from the SDK DSL now. Constructing to_h forces
@@ -58,7 +60,8 @@ class RedmineMcpPluginToolsSdkConversionTest < ActiveSupport::TestCase
   def test_write_tools_carry_a_non_read_only_hint
     write_tools = ALL_TOOLS.select(&:write?)
 
-    assert_equal %w[create_issue add_issue_note].sort, write_tools.map { |t| t.to_h[:name] }.sort
+    assert_equal %w[create_issue add_issue_note create_version create_wiki_page].sort,
+                 write_tools.map { |t| t.to_h[:name] }.sort
     write_tools.each do |tool|
       assert_not tool.to_h[:annotations][:readOnlyHint], "#{tool} is a write tool"
     end

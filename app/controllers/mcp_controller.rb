@@ -57,12 +57,17 @@ class McpController < ApplicationController
     end
 
     return unless authorize_tool_call(message)
+    return unless authorize_resource_read(message)
+    # Prompt argument completion is neither advertised nor handled, so no such
+    # request can reach data access or require a read-tier OAuth step-up.
 
     tools = RedmineMcpPlugin::Registry.all.select do |tool|
       tool.available_to?(User.current, oauth_scopes: @mcp_auth[:scopes])
     end
     server = RedmineMcpPlugin::McpServer.build(
       tools: tools,
+      prompts: RedmineMcpPlugin::Prompts.all,
+      resource_templates: RedmineMcpPlugin::Resources.templates,
       server_context: { user: User.current, auth: @mcp_auth }
     )
     render_rpc(server.handle(message.deep_symbolize_keys), :ok)
@@ -178,6 +183,32 @@ class McpController < ApplicationController
       RedmineMcpPlugin::ScopeChallenge.header(
         permissions: challenge_permissions,
         write: tool.write?,
+        resource_metadata: oauth_protected_resource_url
+      )
+    )
+    head :forbidden
+    false
+  end
+
+  # Pre-authorizes a resources/read the way authorize_tool_call pre-authorizes a
+  # read tool: reading any attachment is gated on :view_issues, so an OAuth token
+  # too narrow for it gets a read-tier step-up challenge for that fixed scope.
+  # The challenged scope is request-level, not attachment-specific, so it reveals
+  # nothing about whether a given attachment exists. When the caller's role itself
+  # cannot grant the permission a scope step-up is futile, so the request falls
+  # through to the SDK handler, which answers every unavailable resource with the
+  # same -32602. Non-OAuth modes carry full permissions and need no challenge.
+  def authorize_resource_read(message)
+    return true unless message['method'] == 'resources/read'
+    return true unless @mcp_auth[:mode] == :oauth2
+    return true if User.current.allowed_to?(RedmineMcpPlugin::Resources::READ_PERMISSION, nil, global: true)
+    return true unless RedmineMcpPlugin::Resources.role_can_read?(User.current)
+
+    response.set_header(
+      'WWW-Authenticate',
+      RedmineMcpPlugin::ScopeChallenge.header(
+        permissions: [RedmineMcpPlugin::Resources::READ_PERMISSION],
+        write: false,
         resource_metadata: oauth_protected_resource_url
       )
     )

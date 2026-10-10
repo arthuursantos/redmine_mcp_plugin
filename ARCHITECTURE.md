@@ -166,8 +166,70 @@ and response rendering remain in `McpController`. After those gates, the
 controller passes the parsed message directly to `MCP::Server#handle` and renders
 the returned Hash. `McpServer.build` is therefore the transport-free composition
 seam: it supplies server identity, the exception reporter, caller-visible tool
-classes, and the authenticated `server_context`, but no Rack, SSE, or session
-adapter. Keep SDK-backed tools independent of Rails request and response objects.
+classes, the prompt set, the attachment resource template and its `resources/read`
+handler, and the authenticated `server_context`, but no Rack, SSE, or session
+adapter. Keep SDK-backed tools, prompts, and resources independent of Rails request
+and response objects.
+
+### Prompts
+
+[`McpServer.build`](lib/redmine_mcp_plugin/mcp_server.rb) mounts the prompts from
+[`Prompts.all`](lib/redmine_mcp_plugin/prompts.rb) and declares the `prompts`
+capability. It does not declare the `completions` capability or install a
+`completion/complete` handler because neither prompt offers argument completion. A
+[`Prompts::Base`](lib/redmine_mcp_plugin/prompts/base.rb) subclass renders
+instruction text for `prompts/get` with its argument values substituted as inert
+data; it performs no Redmine access of its own, so prompts carry no per-user
+discovery gate and the read tools their instructions name stay independently
+authorized. Unlike a tool, a prompt therefore cannot widen what its caller may see.
+
+The request is serialized losslessly as one inert JSON string with no server-side
+validation: the server never dereferences it, both rendered skills are read-only,
+and every named read tool remains independently authorized. JSON string encoding
+keeps newlines, markup delimiters, and command-like text inside the data boundary.
+`qa_ticket_history_report` resolves
+project/category/version/date scope conversationally, asks for a bound or a missing
+date endpoint instead of rejecting the invocation, and proposes returned/reproved
+statuses from `list_statuses` for the user to confirm. Its business-hour baseline
+uses America/Sao_Paulo, Monday-Friday 09:00-12:00 and 13:00-18:00, excludes
+weekends, does not account for holidays, and leaves an open issue's current-owner
+interval ongoing and outside totals rather than synthesizing a cutoff.
+
+### Resources and attachments
+
+The server declares the `resources` capability for one resource type: the bytes
+of a file attached to a visible issue. The capability is deliberately minimal --
+no `subscribe`, no `listChanged` -- because attachment discovery is owned by
+`get_issue`, not by resource enumeration. `resources/list` is an empty page and
+`resources/templates/list` publishes the single dynamic template
+`redmine://issues/{issue_id}/attachments/{attachment_id}`
+([`Resources`](lib/redmine_mcp_plugin/resources.rb)). `get_issue` reports an
+`attachments_count` in its normal shape and, when `include_attachments` is set,
+returns one bounded page of attachment metadata (its own `attachments_offset`/
+`attachments_limit`, the latter clamped by the result cap) rather than an unbounded
+list. It surfaces the same URI per attachment as both metadata (`resource_uri`) and
+a `resource_link` content block, so a client with a resource-selection UI picks the
+bytes without the model restating the URI. Bytes never travel in a tool response, and the
+credential-free `human_download_url` is only a manual browser fallback, never an
+advertised client-fetchable resource.
+
+[`McpServer.build`](lib/redmine_mcp_plugin/mcp_server.rb) mounts the template and
+installs a `resources/read` handler that runs after authentication, so every read
+resolves the issue through `Issue.visible`, re-checks `:view_issues` (OAuth scopes
+included), confirms the attachment's container is exactly that issue, and applies
+`Attachment#visible?`/`#readable?`. A URI is a name, not a capability: these
+checks run on every read. Malformed, absent, invisible, unreadable, and
+wrong-issue URIs all return the same `-32602`, so existence cannot be inferred;
+unexpected I/O stays a sanitized internal error. One response is capped at 5 MiB
+of raw bytes, checked against stored metadata and the file on disk before reading;
+an over-cap but visible attachment returns the implementation-defined `-32001`
+pointing at its `human_download_url`. Safe UTF-8 text returns as `text`;
+everything else, including active formats such as HTML and SVG, returns as a
+base64 `blob`. Reads use `ttlMs: 0` and `cacheScope: "private"` because
+membership and attachment visibility can change. In OAuth mode `McpController`
+offers a `view_issues` step-up before dispatch, mirroring the tool gate; the
+challenged scope is request-level, so it discloses nothing about a specific
+attachment.
 
 ### Error ownership
 
@@ -263,6 +325,22 @@ data uses its own visibility API where Redmine provides one.
 Invisible and nonexistent records must remain indistinguishable. Helpers such as
 `Tools::Base#fetch_project` and tools such as `GetIssue` return the same not-found
 wording for both cases, preventing existence probes.
+
+### Attachment reads re-check authorization on every request
+
+A `resource_uri` is a name, not a capability. `Resources.read` restarts
+authorization from scratch on every `resources/read`: it resolves the issue
+through `Issue.visible`, re-checks `:view_issues` (intersecting the OAuth token's
+narrowed grant), confirms the attachment's container is exactly that issue, and
+applies `Attachment#visible?`/`#readable?`. A malformed URI, an absent issue or
+attachment, an invisible or unreadable attachment, and an attachment addressed
+through the wrong issue all return the same `-32602`, so the surface cannot be
+used to probe existence. The 5 MiB cap is checked against stored metadata and the
+file on disk before any bytes are read, and its size-revealing `-32001` error is
+emitted only after authorization has already permitted disclosure. Active formats
+(HTML, SVG) are never returned as interpretable text. The controller's OAuth
+step-up for this read challenges the request-level `:view_issues` scope only, so
+it never depends on, or reveals, a specific attachment.
 
 ### Discovery hides tools denied by policy
 
